@@ -57,22 +57,60 @@
     const isSuper = session.role === 'super_admin';
 
     const NAV = isSuper ? [
-      { id:'super-admin', label:'لوحة المنصة', icon:'fa-globe', href:'super-admin.html' }
+      { section:'المنصة' },
+      { id:'super-admin',      label:'لوحة المنصة',       icon:'fa-globe',         href:'super-admin.html' },
+      { id:'tenants',          label:'المستأجرون',         icon:'fa-church',        href:'tenants.html' },
+      { id:'platform-health',  label:'صحة المنصة',         icon:'fa-heart-pulse',   href:'platform-health.html' },
+      { section:'الفوترة' },
+      { id:'subscriptions',    label:'الاشتراكات والخطط',  icon:'fa-credit-card',   href:'subscriptions.html' },
+      { id:'billing',          label:'الفواتير والمدفوعات', icon:'fa-file-invoice-dollar', href:'billing.html' },
+      { section:'الذكاء والتحليل' },
+      { id:'usage-analytics',  label:'تحليلات الاستخدام',  icon:'fa-chart-mixed',   href:'usage-analytics.html' },
+      { id:'ai-ops',           label:'رؤى AI التشغيلية',   icon:'fa-brain',         href:'ai-ops.html' },
+      { section:'العمليات' },
+      { id:'white-label',      label:'العلامة التجارية',   icon:'fa-palette',       href:'white-label.html' },
+      { id:'support',          label:'مركز الدعم',         icon:'fa-headset',       href:'support.html' },
+      { id:'knowledge-base',   label:'قاعدة المعرفة',      icon:'fa-book',          href:'knowledge-base.html' },
+      { id:'backups',          label:'النسخ الاحتياطية',   icon:'fa-database',      href:'backups.html' }
     ] : [
       { section:'الرئيسية' },
       { id:'dashboard', label:'لوحة التحكم', icon:'fa-gauge-high', href:'dashboard.html' },
-      { section:'الإدارة' },
-      { id:'members',    label:'المخدومين',    icon:'fa-users',         href:'members.html' },
+      { id:'supervisor', label:'لوحة مشرف الخدمة', icon:'fa-user-tie', href:'supervisor.html',
+        roles:['church_admin','service_admin','service_supervisor','supervisor'] },
+      { section:'الأسر والخدمة' },
+      { id:'families',   label:'الأسر',         icon:'fa-people-roof',   href:'families.html',
+        roles:['church_admin','service_admin','service_supervisor','supervisor','servant_leader','servant','viewer'] },
+      { id:'transitions',label:'اقتراحات النقل', icon:'fa-arrow-right-arrow-left', href:'transitions.html',
+        roles:['church_admin','service_admin','service_supervisor','supervisor'] },
+      { id:'services',   label:'هيكل الخدمة',  icon:'fa-sitemap',       href:'services.html',
+        roles:['church_admin','service_admin','service_supervisor','supervisor','servant_leader','servant'] },
+      { id:'members',    label:'المخدومين',    icon:'fa-users',         href:'members.html',
+        roles:['church_admin','service_admin','service_supervisor','supervisor','servant_leader','servant','viewer'] },
       { id:'users',      label:'المستخدمين',  icon:'fa-user-shield',   href:'users.html', roles:['church_admin','service_admin'] },
-      { id:'attendance', label:'الحضور',       icon:'fa-clipboard-check', href:'attendance.html' },
+      { id:'attendance', label:'الحضور',       icon:'fa-clipboard-check', href:'attendance.html',
+        roles:['church_admin','service_admin','service_supervisor','supervisor','servant_leader','servant'] },
       { id:'events',     label:'الفعاليات',   icon:'fa-calendar-days', href:'events.html' },
-      { id:'followup',   label:'الافتقاد',    icon:'fa-hand-holding-heart', href:'followup.html' },
+      { id:'followup',   label:'الافتقاد',    icon:'fa-hand-holding-heart', href:'followup.html',
+        roles:['church_admin','service_admin','service_supervisor','supervisor','servant_leader','servant'] },
       { section:'الذكاء والأتمتة' },
-      { id:'ai-insights',label:'تحليلات AI',  icon:'fa-brain',         href:'ai-insights.html' },
-      { id:'workflows',  label:'Workflows',    icon:'fa-diagram-project', href:'workflows.html' },
+      { id:'ai-insights',label:'تحليلات AI',  icon:'fa-brain',         href:'ai-insights.html',
+        roles:['church_admin','service_admin','service_supervisor','supervisor','servant_leader','servant'] },
+      { id:'analytics',  label:'التحليلات التشغيلية', icon:'fa-chart-mixed', href:'analytics.html',
+        roles:['church_admin','service_admin','service_supervisor','supervisor'] },
+      { id:'workflows',  label:'Workflows',    icon:'fa-diagram-project', href:'workflows.html',
+        roles:['church_admin','service_admin'] },
+      { id:'workflow-builder', label:'Workflow Builder', icon:'fa-shapes', href:'workflow-builder.html',
+        roles:['church_admin','service_admin'] },
       { id:'notifications', label:'الإشعارات', icon:'fa-bell',         href:'notifications.html' },
+      { section:'الماليات (الحسابات فقط)' },
+      { id:'finance',    label:'الماليات',    icon:'fa-coins',         href:'finance.html', roles:['church_admin','finance','financial_manager'] },
+      { id:'finance-reports', label:'التقارير المالية', icon:'fa-chart-line', href:'finance-reports.html', roles:['church_admin','finance','financial_manager'] },
+      { id:'my-billing', label:'اشتراكي وفواتيري', icon:'fa-credit-card', href:'my-billing.html', roles:['church_admin','financial_manager'] },
       { section:'النظام' },
-      { id:'finance',    label:'الماليات',    icon:'fa-coins',         href:'finance.html', roles:['church_admin','finance'] },
+      { id:'white-label',label:'العلامة التجارية', icon:'fa-palette',   href:'white-label.html', roles:['church_admin'] },
+      { id:'support',    label:'مركز الدعم',  icon:'fa-headset',       href:'support.html' },
+      { id:'knowledge-base', label:'قاعدة المعرفة', icon:'fa-book',    href:'knowledge-base.html' },
+      { id:'security',   label:'الأمان',      icon:'fa-shield-halved', href:'security.html', roles:['church_admin'] },
       { id:'settings',   label:'الإعدادات',   icon:'fa-cog',           href:'settings.html', roles:['church_admin'] }
     ];
 
@@ -133,8 +171,10 @@
   function roleLabel(r){
     return ({
       super_admin:'مدير المنصة', church_admin:'مدير الكنيسة',
-      service_admin:'أمين الخدمة', servant:'خادم',
-      supervisor:'مشرف', finance:'محاسب', viewer:'عرض فقط'
+      financial_manager:'مدير مالي', servant_leader:'قائد خدمة',
+      servant:'خادم', viewer:'عرض فقط', member:'عضو',
+      // legacy
+      service_supervisor:'مشرف خدمة', service_admin:'أمين الخدمة', supervisor:'مشرف', finance:'محاسب'
     })[r] || r;
   }
 
@@ -143,15 +183,24 @@
     init(pageId, requiredRoles){
       if (!Auth.require(requiredRoles)) return false;
       renderLayout(pageId);
+      // run permission-driven DOM hiding after layout render
+      setTimeout(() => { try{ Permissions.applyDomGuards(); }catch(_){} }, 0);
       return true;
     },
     content(){ return document.getElementById('page-content'); },
-    render(html){ App.content().innerHTML = html; }
+    render(html){
+      App.content().innerHTML = html;
+      try{ Permissions.applyDomGuards(App.content()); }catch(_){}
+    }
   };
 
   // Run workflow engine + AI on app start (every page load)
   window.addEventListener('DOMContentLoaded', () => {
-    if (Auth.session() && window.WorkflowEngine && Auth.session().role !== 'super_admin'){
+    const s = Auth.session(); if (!s) return;
+    try{ window.Billing && Billing.runLifecycle(); }catch(_){}
+    try{ window.Backup && Backup.schedule(); }catch(_){}
+    try{ window.WhiteLabel && WhiteLabel.applyForCurrent(); }catch(_){}
+    if (window.WorkflowEngine && s.role !== 'super_admin'){
       try{ WorkflowEngine.runAll(); }catch(_){}
       try{ AIEngine.recomputeAll(); }catch(_){}
     }
