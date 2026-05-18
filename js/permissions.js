@@ -248,6 +248,42 @@
     }
   };
 
+  /* v22 — warmup hook called by App.boot. Idempotent. */
+  Permissions.warmup = function(){
+    if (Permissions.__warmed) return; Permissions.__warmed = true;
+    try { Permissions.matrixFor('church_admin'); } catch(_){}
+  };
+
+  /* v22 — unified single-source page visibility check.
+     Consults role matrix + hierarchy + scoped + finance-isolation in ONE place.
+     Returns true unless a layer explicitly denies. Fail-safe (never throws). */
+  Permissions.canSeePage = function(pageId){
+    try{
+      const s = window.Auth && Auth.session(); if (!s) return false;
+      if (s.role === 'super_admin'){
+        // super admin only sees platform pages
+        const platform = ['super-admin','tenants','platform-health','subscriptions','billing',
+          'usage-analytics','ai-ops','white-label','support','knowledge-base','backups'];
+        return platform.includes(pageId);
+      }
+      // finance isolation — non-finance roles cannot see finance pages
+      if (window.FinanceIsolation && typeof FinanceIsolation.canAccess === 'function'){
+        if (/^finance|my-billing/.test(pageId) && !FinanceIsolation.canAccess(s)) return false;
+      }
+      // hierarchy — supervisor-only pages
+      if (window.Hierarchy && typeof Hierarchy.canSeePage === 'function'){
+        const h = Hierarchy.canSeePage(s, pageId);
+        if (h === false) return false;
+      }
+      // scoped permissions
+      if (window.ScopedPermissions && typeof ScopedPermissions.canSeePage === 'function'){
+        const sc = ScopedPermissions.canSeePage(s, pageId);
+        if (sc === false) return false;
+      }
+      return true;
+    }catch(_){ return true; }
+  };
+
   window.Permissions = Permissions;
 })();
 

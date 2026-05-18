@@ -335,27 +335,25 @@
   }
 
   function tabTimeline(){
-    const events = window.Family && Family.movementLog ? Family.movementLog(fid) : [];
-    const iconFor = k => ({
-      transfer:'fa-right-left', address_change:'fa-location-dot',
-      split:'fa-code-branch', merge:'fa-code-merge',
-      guardian_change:'fa-user-shield', custody_change:'fa-scale-balanced',
-      service_change:'fa-handshake-angle', attendance_pattern_change:'fa-chart-line',
-      status_change:'fa-flag', member_added:'fa-user-plus', member_removed:'fa-user-minus'
-    })[k] || 'fa-circle-dot';
-    return `
-      <div class="card">
-        <div class="card-title"><i class="fa-solid fa-clock-rotate-left"></i> السجل التاريخي للأسرة</div>
-        ${events.length ? `<ul style="list-style:none;padding:0;margin-top:.5rem">
-          ${events.map(e=>`<li style="padding:.5rem .25rem;border-bottom:1px solid #e5e7eb">
-            <i class="fa-solid ${iconFor(e.kind)}" style="color:#3b82f6;margin-inline-end:.5rem"></i>
-            <b>${e.kind}</b>
-            ${e.from_value!=null||e.to_value!=null ? `: <span style="color:#64748b">${e.from_value||'—'} → ${e.to_value||'—'}</span>`:''}
-            <span style="float:inline-end;color:#94a3b8;font-size:.85rem">${UI.fmt.relative(e.occurred_at)}</span>
-            ${e.notes ? `<div style="color:#64748b;font-size:.85rem;margin-top:.25rem">${e.notes}</div>`:''}
-          </li>`).join('')}
-        </ul>` : '<div class="empty">لا توجد أحداث مسجلة</div>'}
-      </div>`;
+    // Merge legacy movement log + enterprise Timeline engine events
+    const movement = (window.Family && Family.movementLog ? Family.movementLog(fid) : [])
+      .map(e => ({
+        occurred_at: e.occurred_at, title: e.kind, domain:'movement',
+        icon: ({transfer:'right-left',address_change:'location-dot',split:'code-branch',
+                merge:'code-merge',guardian_change:'user-shield',custody_change:'scale-balanced',
+                status_change:'flag',member_added:'user-plus',member_removed:'user-minus'}[e.kind])||'circle-dot',
+        detail: (e.from_value||e.to_value) ? `${e.from_value||'—'} → ${e.to_value||'—'}` : (e.notes||'')
+      }));
+    const tlEvents = (window.Timeline && Timeline.forFamily) ? Timeline.forFamily(fid) : [];
+    const all = movement.concat(tlEvents)
+      .sort((a,b)=> new Date(b.occurred_at)-new Date(a.occurred_at));
+    const body = (window.Timeline && Timeline.renderHTML)
+      ? Timeline.renderHTML(all)
+      : (all.length ? all.map(e=>`<div style="padding:.5rem;border-bottom:1px solid #eee"><b>${e.title}</b> <span style="color:#94a3b8;font-size:.8rem;float:inline-end">${UI.fmt.relative(e.occurred_at)}</span><div style="color:#64748b;font-size:.85rem">${e.detail||''}</div></div>`).join('') : '<div class="empty">لا توجد أحداث مسجلة</div>');
+    return `<div class="card">
+      <div class="card-title"><i class="fa-solid fa-clock-rotate-left"></i> السجل التاريخي للأسرة <span style="color:#94a3b8;font-weight:400;font-size:.85rem">(${all.length} حدث)</span></div>
+      ${body}
+    </div>`;
   }
 
   function tabBody(){

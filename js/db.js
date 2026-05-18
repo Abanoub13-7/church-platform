@@ -188,7 +188,14 @@
         idField = a; id = b; patch = c || {};
       }
       const list = cache[t] || [];
-      const idx = list.findIndex(r => r[idField] === id);
+      // Support object-as-id form: DB.update(table, {field:value,...}, patch)
+      let idx;
+      if (id !== null && typeof id === 'object'){
+        const query = id;
+        idx = list.findIndex(r => Object.keys(query).every(k => r[k] === query[k]));
+      } else {
+        idx = list.findIndex(r => r[idField] === id);
+      }
       if (idx < 0) return null;
       if (!isSuperAdmin() && list[idx].church_id && list[idx].church_id !== getChurchId()) return null;
       list[idx] = { ...list[idx], ...patch, updated_at: new Date().toISOString() };
@@ -231,6 +238,10 @@
     on(fn){ DB._subs.push(fn); },
     _emit(op, table, row){ DB._subs.forEach(fn => { try{ fn(op,table,row); }catch(_){} }); }
   };
+
+  // Backwards-compat / convenience aliases used by feature modules
+  DB.select = DB.all;
+  DB.uuid   = uuid;
 
   window.DB = DB;
 

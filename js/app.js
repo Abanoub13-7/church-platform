@@ -179,8 +179,34 @@
   }
 
 
-  /* === PAGE BOOTSTRAP (v18 — stable + idempotent) === */
+  /* === PAGE BOOTSTRAP (v22 — unified stable boot + error isolation) === */
+  try{
+    window.addEventListener('error', e => { try{ console.warn('[app:onerror]', e.message); }catch(_){} });
+    window.addEventListener('unhandledrejection', e => { try{ console.warn('[app:rejection]', e.reason); }catch(_){} });
+  }catch(_){}
+
+  function safe(label, fn){
+    try { return fn(); }
+    catch(err){ try{ console.warn('[app:safe]', label, err); }catch(_){ } return null; }
+  }
+
+  /* Unified bootstrap stages — deterministic order, each isolated. */
+  function bootSequence(){
+    if (window.__APP_BOOTED__) return;
+    window.__APP_BOOTED__ = true;
+    safe('1.storage',     () => window.DB && DB.init && DB.init());
+    safe('2.auth',        () => window.Auth && Auth.bootstrap && Auth.bootstrap());
+    safe('3.permissions', () => window.Permissions && Permissions.warmup && Permissions.warmup());
+    safe('4.eventbus',    () => window.Bus && Bus.init && Bus.init());
+    safe('5.services',    () => window.ChurchApp && ChurchApp.services && ChurchApp.services.init && ChurchApp.services.init());
+    safe('6.engines',     () => window.AIEngine && AIEngine.warmup && AIEngine.warmup());
+    safe('7.workflows',   () => window.WorkflowEngine && WorkflowEngine.warmup && WorkflowEngine.warmup());
+    safe('8.opintel',     () => window.FollowupIntel && FollowupIntel.scan && FollowupIntel.scan());
+    safe('9.calendar',    () => window.Calendar && Calendar.rebuild && Calendar.rebuild());
+  }
+
   window.App = {
+    safe,
     init(pageId, requiredRoles){
       try{
         const declared = document.body && document.body.dataset && document.body.dataset.page;
@@ -188,16 +214,32 @@
         if (window.__APP_PAGE__ && window.__APP_PAGE__ !== pageId) return false;
         if (!window.Auth || !Auth.require(requiredRoles)) return false;
         window.__APP_PAGE__ = pageId;
-        if (!document.querySelector('.app')) renderLayout(pageId);
-        setTimeout(() => { try{ window.Permissions && Permissions.applyDomGuards(); }catch(_){} }, 0);
+        bootSequence();
+        if (!document.querySelector('.app')) safe('layout', () => renderLayout(pageId));
+        setTimeout(() => safe('domguards', () => window.Permissions && Permissions.applyDomGuards()), 0);
         return true;
       }catch(err){ try{ console.warn('[App.init]', pageId, err); }catch(_){} return false; }
     },
     content(){ return document.getElementById('page-content'); },
     render(html){
       const c = App.content(); if (!c) return;
-      c.innerHTML = html;
-      try{ window.Permissions && Permissions.applyDomGuards(c); }catch(_){}
+      try { c.innerHTML = html; }
+      catch(err){
+        try{ console.warn('[App.render]', err); }catch(_){}
+        c.innerHTML = '<div class="empty" style="padding:2rem;text-align:center"><i class="fa-solid fa-triangle-exclamation" style="color:#f59e0b;font-size:2rem"></i><p style="margin-top:1rem">تعذر عرض المحتوى — تم عزل الخطأ</p></div>';
+      }
+      safe('render.domguards', () => window.Permissions && Permissions.applyDomGuards(c));
+    },
+    /* Fail-safe panel — a single broken tab never blanks the page. */
+    safePanel(host, label, fn){
+      if (!host) return;
+      try { const html = fn(); if (typeof html === 'string') host.innerHTML = html; }
+      catch(err){
+        try{ console.warn('[App.safePanel]', label, err); }catch(_){}
+        host.innerHTML = '<div class="empty" style="padding:2rem;text-align:center;color:var(--text2,#666)">'
+          + '<i class="fa-solid fa-circle-exclamation" style="color:#ef4444;font-size:1.5rem"></i>'
+          + '<p style="margin-top:.75rem">تعذر تحميل قسم <b>' + (label||'') + '</b> — تم عزل المشكلة.</p></div>';
+      }
     }
   };
 
@@ -213,15 +255,16 @@
 
   // Run workflow engine + AI on app start (every page load) — fully fail-safe
   window.addEventListener('DOMContentLoaded', () => {
-    try{
+    safe('bootstrap', () => {
       const s = window.Auth && Auth.session(); if (!s) return;
-      try{ window.Billing && Billing.runLifecycle && Billing.runLifecycle(); }catch(_){}
-      try{ window.Backup  && Backup.schedule    && Backup.schedule(); }catch(_){}
-      try{ window.WhiteLabel && WhiteLabel.applyForCurrent && WhiteLabel.applyForCurrent(); }catch(_){}
+      safe('billing',  () => window.Billing && Billing.runLifecycle && Billing.runLifecycle());
+      safe('backup',   () => window.Backup  && Backup.schedule    && Backup.schedule());
+      safe('wl',       () => window.WhiteLabel && WhiteLabel.applyForCurrent && WhiteLabel.applyForCurrent());
       if (s.role !== 'super_admin'){
-        try{ window.WorkflowEngine && WorkflowEngine.runAll && WorkflowEngine.runAll(); }catch(_){}
-        try{ window.AIEngine && AIEngine.recomputeAll && AIEngine.recomputeAll(); }catch(_){}
+        safe('wf',  () => window.WorkflowEngine && WorkflowEngine.runAll && WorkflowEngine.runAll());
+        safe('ai',  () => window.AIEngine && AIEngine.recomputeAll && AIEngine.recomputeAll());
+        safe('intel',()=> window.FollowupIntel && FollowupIntel.scan && FollowupIntel.scan());
       }
-    }catch(_){}
+    });
   });
 })();
