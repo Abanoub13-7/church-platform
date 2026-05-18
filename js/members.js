@@ -275,6 +275,25 @@
 
       if (!data.full_name) return UI.toast('الاسم مطلوب','error');
 
+      // v6 spine: every member MUST belong to a family.
+      if (!data.family_id){
+        const fams = DB.findAll('families');
+        if (!fams.length){
+          return UI.toast('أضف أسرة أولاً من صفحة الأسر قبل إنشاء مخدوم','error');
+        }
+        const pick = prompt(
+          'اختر معرف الأسرة للمخدوم:\n' +
+          fams.slice(0,30).map(f => `${f.family_id} — ${f.family_name||f.family_code||''}`).join('\n')
+        );
+        if (!pick) return UI.toast('يجب اختيار الأسرة','error');
+        if (!DB.byId('families','family_id', pick.trim())){
+          return UI.toast('معرف الأسرة غير صحيح','error');
+        }
+        data.family_id = pick.trim();
+      } else if (!DB.byId('families','family_id', data.family_id)){
+        return UI.toast('معرف الأسرة غير موجود','error');
+      }
+
       // Auto-derive stage from birth_date if missing
       if (data.birth_date && !data.age_stage){
         data.age_stage = Hierarchy.stageFromBirth(data.birth_date);
@@ -307,7 +326,8 @@
       } else {
         data.qr_code = data.qr_code || ('QR-'+Date.now());
         data.member_status = data.member_status || 'new';
-        DB.insert('members', data);
+        const created = DB.insert('members', data);
+        try { window.Lifecycle && Lifecycle.onMemberCreated(created || data); } catch(_){}
         UI.toast('تمت إضافة المخدوم','success');
       }
       UI.closeModal();

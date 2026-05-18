@@ -80,6 +80,23 @@
         <div><div class="stat-value">${UI.fmt.money(todayDonations)}</div><div class="stat-label">تبرعات اليوم</div></div></div>`:''}
     </div>
 
+    ${(function(){
+      const smart = (window.Insights && Insights.dashboard) ? Insights.dashboard() : [];
+      if (!smart.length) return '';
+      const sevColor = { critical:'red', warning:'orange', info:'blue' };
+      return `
+      <div class="card mt-3">
+        <div class="card-header"><div class="card-title"><i class="fa-solid fa-lightbulb"></i> رؤى ذكية (Insights)</div></div>
+        <div class="grid grid-2" style="gap:.5rem">
+          ${smart.map(s=>`
+            <div style="padding:.75rem;border-inline-start:3px solid var(--${sevColor[s.severity]||'blue'});background:var(--bg2);border-radius:8px">
+              <div style="display:flex;align-items:center;gap:.5rem;font-weight:700"><i class="fa-solid ${s.icon||'fa-lightbulb'}"></i> ${s.title}</div>
+              <div style="font-size:.85rem;color:var(--text2);margin-top:.25rem">${s.body||''}</div>
+            </div>`).join('')}
+        </div>
+      </div>`;
+    })()}
+
     <div class="grid grid-2 mt-3">
       <div class="card">
         <div class="card-header"><div class="card-title"><i class="fa-solid fa-brain"></i> تحليلات AI الخاصة بك</div>

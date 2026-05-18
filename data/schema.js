@@ -128,39 +128,151 @@ window.SCHEMA = {
     constraints: ['UNIQUE(session_id, member_id)'] // duplicate prevention
   },
 
-  /* ===== EVENTS ===== */
+  /* ===== EVENTS (Enterprise) ===== */
   events: {
     fields: {
-      event_id:      { type: 'uuid', pk: true },
-      church_id:     { type: 'uuid', ref: 'churches.church_id', required: true },
-      title:         { type: 'string' },
-      description:   { type: 'text' },
-      event_type:    { type: 'string' },
-      starts_at:     { type: 'datetime' },
-      ends_at:       { type: 'datetime' },
-      location:      { type: 'string' },
-      capacity:      { type: 'int' },
-      price:         { type: 'decimal' },
+      event_id:        { type: 'uuid', pk: true },
+      church_id:       { type: 'uuid', ref: 'churches.church_id', required: true },
+      title:           { type: 'string' },
+      description:     { type: 'text' },
+      event_type:      { type: 'string' }, // conference|retreat|meeting|class|course|trip|camp|prayer|ministry|servant
+      starts_at:       { type: 'datetime' },
+      ends_at:         { type: 'datetime' },
+      location:        { type: 'string' },
+      capacity:        { type: 'int' },
+      reserved_seats:  { type: 'int', default: 0 },     // VIP+servant reserved
+      vip_seats:       { type: 'int', default: 0 },
+      servant_seats:   { type: 'int', default: 0 },
+      waitlist_capacity:{ type: 'int', default: 0 },    // 0 = unlimited
+      overbook_pct:    { type: 'int', default: 0 },     // smart overbooking ratio
+      price:           { type: 'decimal' },
+      currency:        { type: 'string', default: 'EGP' },
       has_waiting_list:{ type: 'boolean', default: true },
-      status:        { type: 'enum', values: ['draft','open','full','closed','cancelled'] },
-      created_by:    { type: 'uuid', ref: 'users.user_id' },
-      created_at:    { type: 'datetime' }
+      requires_approval:{ type: 'boolean', default: false },
+      auto_close_when_full:{ type: 'boolean', default: true },
+      registration_opens_at: { type: 'datetime', nullable: true },
+      registration_closes_at:{ type: 'datetime', nullable: true },
+      // Lifecycle: draft → review → published → reg_open → reg_closed → ongoing → completed → archived
+      lifecycle:       { type: 'enum', values: ['draft','review','published','reg_open','reg_closed','ongoing','completed','archived'], default: 'draft' },
+      // Operational status — derived but cached: draft|pending_approval|published|active|full|waitlist|completed|cancelled|archived
+      status:          { type: 'enum', values: ['draft','pending_approval','published','active','full','waitlist','completed','cancelled','archived'], default: 'draft' },
+      // Access rules (role-based event access)
+      access_rules:    { type: 'json', default: {} }, // { roles:[], min_age, max_age, gender, ministries:[], classes:[], min_attendance_rate, min_serving_level }
+      // Template + budget links
+      template_id:     { type: 'uuid', ref: 'event_templates.template_id', nullable: true },
+      budget_id:       { type: 'uuid', ref: 'event_budgets.budget_id', nullable: true },
+      treasury_id:     { type: 'uuid', ref: 'treasuries.treasury_id', nullable: true },
+      // Workflow + approval
+      approval_required:{ type: 'boolean', default: false },
+      approved_by:     { type: 'uuid', ref: 'users.user_id', nullable: true },
+      approved_at:     { type: 'datetime', nullable: true },
+      cancelled_reason:{ type: 'string', nullable: true },
+      created_by:      { type: 'uuid', ref: 'users.user_id' },
+      updated_at:      { type: 'datetime', nullable: true },
+      created_at:      { type: 'datetime' }
     }
   },
 
-  /* ===== EVENT BOOKINGS ===== */
+  /* ===== EVENT BOOKINGS / REGISTRATIONS ===== */
   event_bookings: {
     fields: {
-      booking_id:    { type: 'uuid', pk: true },
-      church_id:     { type: 'uuid', ref: 'churches.church_id', required: true },
-      event_id:      { type: 'uuid', ref: 'events.event_id' },
-      member_id:     { type: 'uuid', ref: 'members.member_id' },
-      booking_status:{ type: 'enum', values: ['confirmed','waiting','cancelled','attended','no_show'] },
-      bus_number:    { type: 'string', nullable: true },
-      room_number:   { type: 'string', nullable: true },
-      payment_status:{ type: 'enum', values: ['unpaid','partial','paid','refunded'] },
-      qr_ticket:     { type: 'string' },
-      created_at:    { type: 'datetime' }
+      booking_id:      { type: 'uuid', pk: true },
+      church_id:       { type: 'uuid', ref: 'churches.church_id', required: true },
+      event_id:        { type: 'uuid', ref: 'events.event_id' },
+      member_id:       { type: 'uuid', ref: 'members.member_id' },
+      // Lifecycle: pending → approved → rejected → waiting → confirmed → attended | no_show | cancelled
+      booking_status:  { type: 'enum', values: ['pending','approved','rejected','confirmed','waiting','cancelled','attended','no_show'] },
+      waitlist_position:{ type: 'int', nullable: true },
+      seat_class:      { type: 'enum', values: ['regular','vip','servant','reserved'], default: 'regular' },
+      bus_number:      { type: 'string', nullable: true },
+      room_number:     { type: 'string', nullable: true },
+      payment_status:  { type: 'enum', values: ['unpaid','partial','paid','refunded'] },
+      amount_paid:     { type: 'decimal', default: 0 },
+      qr_ticket:       { type: 'string' },           // unique ticket code
+      reservation_code:{ type: 'string' },           // human-readable code
+      checked_in_at:   { type: 'datetime', nullable: true },
+      approved_by:     { type: 'uuid', nullable: true },
+      approved_at:     { type: 'datetime', nullable: true },
+      rejected_reason: { type: 'string', nullable: true },
+      notes:           { type: 'text', nullable: true },
+      created_at:      { type: 'datetime' }
+    }
+  },
+
+  /* ===== EVENT TEMPLATES (reusable blueprints) ===== */
+  event_templates: {
+    fields: {
+      template_id:     { type: 'uuid', pk: true },
+      church_id:       { type: 'uuid', ref: 'churches.church_id', required: true },
+      name:            { type: 'string' },
+      event_type:      { type: 'string' },
+      defaults:        { type: 'json' }, // { capacity, price, duration_hours, access_rules, tasks:[], budget_lines:[] }
+      created_by:      { type: 'uuid', ref: 'users.user_id' },
+      created_at:      { type: 'datetime' }
+    }
+  },
+
+  /* ===== EVENT TASKS (organizer / volunteer assignments) ===== */
+  event_tasks: {
+    fields: {
+      task_id:         { type: 'uuid', pk: true },
+      church_id:       { type: 'uuid', ref: 'churches.church_id', required: true },
+      event_id:        { type: 'uuid', ref: 'events.event_id' },
+      title:           { type: 'string' },
+      role:            { type: 'string' }, // organizer|servant|volunteer|transport|attendance|finance
+      assigned_to:     { type: 'uuid', ref: 'users.user_id', nullable: true },
+      due_at:          { type: 'datetime', nullable: true },
+      status:          { type: 'enum', values: ['open','in_progress','done','escalated','cancelled'], default: 'open' },
+      escalation_level:{ type: 'int', default: 0 },
+      completed_at:    { type: 'datetime', nullable: true },
+      created_at:      { type: 'datetime' }
+    }
+  },
+
+  /* ===== EVENT BUDGETS ===== */
+  event_budgets: {
+    fields: {
+      budget_id:       { type: 'uuid', pk: true },
+      church_id:       { type: 'uuid', ref: 'churches.church_id', required: true },
+      event_id:        { type: 'uuid', ref: 'events.event_id' },
+      estimated_total: { type: 'decimal', default: 0 },
+      approved_total:  { type: 'decimal', default: 0 },
+      actual_total:    { type: 'decimal', default: 0 },
+      lines:           { type: 'json', default: [] }, // [{ category, label, estimated, actual }]
+      approval_status: { type: 'enum', values: ['draft','pending','approved','rejected'], default: 'draft' },
+      approved_by:     { type: 'uuid', nullable: true },
+      approved_at:     { type: 'datetime', nullable: true },
+      created_at:      { type: 'datetime' }
+    }
+  },
+
+  /* ===== EVENT EXPENSES (links to financial_transactions) ===== */
+  event_expenses: {
+    fields: {
+      expense_id:      { type: 'uuid', pk: true },
+      church_id:       { type: 'uuid', ref: 'churches.church_id', required: true },
+      event_id:        { type: 'uuid', ref: 'events.event_id' },
+      category:        { type: 'string' }, // transport|food|equipment|activity|service|other
+      label:           { type: 'string' },
+      amount:          { type: 'decimal' },
+      transaction_id:  { type: 'uuid', ref: 'financial_transactions.transaction_id', nullable: true },
+      status:          { type: 'enum', values: ['pending','approved','rejected','paid'], default: 'pending' },
+      created_by:      { type: 'uuid', ref: 'users.user_id' },
+      created_at:      { type: 'datetime' }
+    }
+  },
+
+  /* ===== EVENT TIMELINE (immutable event log) ===== */
+  event_timeline: {
+    fields: {
+      entry_id:        { type: 'uuid', pk: true },
+      church_id:       { type: 'uuid', ref: 'churches.church_id', required: true },
+      event_id:        { type: 'uuid', ref: 'events.event_id' },
+      member_id:       { type: 'uuid', nullable: true },
+      action:          { type: 'string' }, // created|approved|published|registration_opened|registered|waitlisted|promoted|approved_reg|rejected_reg|checked_in|cancelled|completed|archived|expense_added|task_assigned
+      actor_id:        { type: 'uuid', nullable: true },
+      meta:            { type: 'json', default: {} },
+      created_at:      { type: 'datetime' }
     }
   },
 
@@ -319,5 +431,307 @@ window.SCHEMA = {
       user_agent:    { type: 'string' },
       created_at:    { type: 'datetime' }
     }
+  },
+
+  /* ===== PHASE 1 ADDITIONS ===== */
+  audit_logs: {
+    fields: {
+      log_id:    { type:'uuid', pk:true },
+      church_id: { type:'uuid', ref:'churches.church_id', nullable:true },
+      user_id:   { type:'uuid', ref:'users.user_id', nullable:true },
+      user_name: { type:'string' }, role:{ type:'string' },
+      action:    { type:'string', required:true },
+      meta:      { type:'json' },
+      severity:  { type:'enum', values:['info','success','warning','critical'] },
+      impersonator_id:{ type:'uuid', nullable:true },
+      created_at:{ type:'datetime' }
+    }
+  },
+  feature_flags: {
+    fields: {
+      flag_id:          { type:'uuid', pk:true },
+      church_id:        { type:'uuid', ref:'churches.church_id', required:true },
+      disabled_modules: { type:'json' } // string[]
+    }
+  },
+  subscription_plans: {
+    fields: {
+      plan_key:    { type:'string', pk:true },
+      label:       { type:'string' },
+      max_members: { type:'number' },
+      max_users:   { type:'number' },
+      storage_mb:  { type:'number' },
+      features:    { type:'json' }
+    }
+  },
+  custom_roles: {
+    fields: {
+      role_id:      { type:'uuid', pk:true },
+      church_id:    { type:'uuid', ref:'churches.church_id', nullable:true },
+      role_key:     { type:'string', unique:true },
+      label:        { type:'string' },
+      capabilities: { type:'json' }, // string[] of canX
+      is_active:    { type:'boolean', default:true },
+      created_at:   { type:'datetime' }
+    }
+  },
+  platform_notifications: {
+    fields: {
+      notification_id:{ type:'uuid', pk:true },
+      title:{ type:'string', required:true }, body:{ type:'text' },
+      type:{ type:'enum', values:['info','maintenance','alert','update'] },
+      target:{ type:'string' }, // 'all' or church_id
+      created_by:{ type:'uuid', ref:'users.user_id' },
+      created_at:{ type:'datetime' }
+    }
+  },
+
+  /* ===== PHASE 2 — Enterprise finance ===== */
+  treasuries: {
+    fields: {
+      treasury_id:{ type:'uuid', pk:true }, church_id:{ type:'uuid', ref:'churches.church_id' },
+      account_key:{ type:'string' }, code:{ type:'string' }, name:{ type:'string' },
+      type:{ type:'enum', values:['asset','income','expense','equity'] },
+      balance:{ type:'decimal', default:0 },
+      created_at:{ type:'datetime' }, updated_at:{ type:'datetime', nullable:true }
+    }
+  },
+  ledger_entries: {
+    fields: {
+      entry_id:{ type:'uuid', pk:true }, church_id:{ type:'uuid', ref:'churches.church_id' },
+      transaction_id:{ type:'uuid', ref:'financial_transactions.transaction_id' },
+      treasury_id:{ type:'uuid', ref:'treasuries.treasury_id' },
+      account_key:{ type:'string' }, period_id:{ type:'string' },
+      debit:{ type:'decimal', default:0 }, credit:{ type:'decimal', default:0 },
+      description:{ type:'text' }, created_at:{ type:'datetime' }
+    }
+  },
+  fin_periods: {
+    fields: {
+      period_id:{ type:'string', pk:true }, church_id:{ type:'uuid', ref:'churches.church_id' },
+      status:{ type:'enum', values:['open','closed'], default:'open' },
+      opened_at:{ type:'datetime' }, closed_at:{ type:'datetime', nullable:true },
+      closed_by:{ type:'uuid', ref:'users.user_id', nullable:true }
+    }
+  },
+  fin_insights: {
+    fields: {
+      kind:{ type:'string' }, severity:{ type:'enum', values:['info','warning','critical'] },
+      msg:{ type:'text' }, church_id:{ type:'uuid', ref:'churches.church_id' },
+      computed_at:{ type:'datetime' }
+    }
   }
 };
+
+/* ============================================================
+   v5 — CHURCH SERVICE HIERARCHY + FAMILY + FINANCE WORKFLOW
+   Extends the schema above with new tables and member fields.
+   ============================================================ */
+(function(){
+  const S = window.SCHEMA;
+
+  /* ----- Hierarchical service tree ----- */
+  S.services = { fields: {
+    service_id:{ type:'uuid', pk:true },
+    church_id:{ type:'uuid', ref:'churches.church_id', required:true },
+    name:{ type:'string', required:true },            // ابتدائي / إعدادي / ثانوي / جامعة / شباب / مدارس أحد
+    code:{ type:'string' },
+    description:{ type:'text' },
+    supervisor_id:{ type:'uuid', ref:'users.user_id', nullable:true },
+    active:{ type:'boolean', default:true },
+    created_at:{ type:'datetime' }
+  }};
+
+  S.service_stages = { fields: {
+    stage_id:{ type:'uuid', pk:true },
+    church_id:{ type:'uuid', ref:'churches.church_id', required:true },
+    service_id:{ type:'uuid', ref:'services.service_id', required:true },
+    name:{ type:'string', required:true },            // أولى وثانية ابتدائي
+    age_min:{ type:'int' },
+    age_max:{ type:'int' },
+    supervisor_id:{ type:'uuid', ref:'users.user_id', nullable:true },
+    created_at:{ type:'datetime' }
+  }};
+
+  S.service_groups = { fields: {
+    group_id:{ type:'uuid', pk:true },
+    church_id:{ type:'uuid', ref:'churches.church_id', required:true },
+    service_id:{ type:'uuid', ref:'services.service_id' },
+    stage_id:{ type:'uuid', ref:'service_stages.stage_id' },
+    name:{ type:'string', required:true },            // مجموعة بنين / بنات
+    gender:{ type:'enum', values:['male','female','mixed'], default:'mixed' },
+    leader_id:{ type:'uuid', ref:'users.user_id', nullable:true },
+    created_at:{ type:'datetime' }
+  }};
+
+  /* ----- Extend service_classes with hierarchy refs ----- */
+  Object.assign(S.service_classes.fields, {
+    service_id:{ type:'uuid', ref:'services.service_id', nullable:true },
+    stage_id:{ type:'uuid', ref:'service_stages.stage_id', nullable:true },
+    group_id:{ type:'uuid', ref:'service_groups.group_id', nullable:true }
+  });
+
+  /* ----- Extend members with full profile + family + education ----- */
+  Object.assign(S.members.fields, {
+    nickname:{ type:'string', nullable:true },
+    join_date:{ type:'date', nullable:true },
+    spiritual_notes:{ type:'text', nullable:true },
+    special_needs:{ type:'text', nullable:true },
+    assigned_servant_id:{ type:'uuid', ref:'users.user_id', nullable:true },
+    supervisor_id:{ type:'uuid', ref:'users.user_id', nullable:true },
+    service_id:{ type:'uuid', ref:'services.service_id', nullable:true },
+    stage_id:{ type:'uuid', ref:'service_stages.stage_id', nullable:true },
+    group_id:{ type:'uuid', ref:'service_groups.group_id', nullable:true },
+    // education / work
+    education:{ type:'string', nullable:true },
+    college:{ type:'string', nullable:true },
+    work:{ type:'string', nullable:true },
+    // family linking
+    family_id:{ type:'uuid', nullable:true },
+    father_name:{ type:'string', nullable:true },
+    father_phone:{ type:'string', nullable:true },
+    father_job:{ type:'string', nullable:true },
+    father_spiritual_status:{ type:'string', nullable:true },
+    mother_name:{ type:'string', nullable:true },
+    mother_phone:{ type:'string', nullable:true },
+    mother_job:{ type:'string', nullable:true },
+    mother_spiritual_status:{ type:'string', nullable:true },
+    area:{ type:'string', nullable:true },
+    family_notes:{ type:'text', nullable:true },
+    siblings_count:{ type:'int', nullable:true },
+    birth_order:{ type:'int', nullable:true }
+  });
+  // phone is optional for kids; parent_phone REQUIRED for kids enforced in form/logic
+  if (S.members.fields.phone) S.members.fields.phone.required = false;
+
+  /* ----- Add `service_supervisor` role to users enum ----- */
+  const roleField = S.users.fields.role;
+  if (roleField && !roleField.values.includes('service_supervisor')){
+    roleField.values.push('service_supervisor');
+  }
+
+  /* ----- Service Supervisor assignments ----- */
+  S.service_supervisors = { fields: {
+    sup_id:{ type:'uuid', pk:true },
+    church_id:{ type:'uuid', ref:'churches.church_id', required:true },
+    user_id:{ type:'uuid', ref:'users.user_id', required:true },
+    service_id:{ type:'uuid', ref:'services.service_id' },
+    stage_id:{ type:'uuid', ref:'service_stages.stage_id', nullable:true },
+    assigned_at:{ type:'datetime' },
+    active:{ type:'boolean', default:true }
+  }};
+
+  /* ----- Servant evaluation by supervisor ----- */
+  S.servant_evaluations = { fields: {
+    eval_id:{ type:'uuid', pk:true },
+    church_id:{ type:'uuid', ref:'churches.church_id', required:true },
+    servant_id:{ type:'uuid', ref:'users.user_id', required:true },
+    supervisor_id:{ type:'uuid', ref:'users.user_id', required:true },
+    period:{ type:'string' },                         // 2026-Q1
+    attendance_score:{ type:'int' },                  // 0..10
+    visitation_score:{ type:'int' },
+    spiritual_score:{ type:'int' },
+    teamwork_score:{ type:'int' },
+    overall:{ type:'int' },
+    notes:{ type:'text' },
+    created_at:{ type:'datetime' }
+  }};
+
+  /* ----- Financial workflow ----- */
+  S.financial_requests = { fields: {
+    request_id:{ type:'uuid', pk:true },
+    church_id:{ type:'uuid', ref:'churches.church_id', required:true },
+    requester_id:{ type:'uuid', ref:'users.user_id' },
+    type:{ type:'enum', values:['payment','donation','expense','reimbursement','event_advance'] },
+    amount:{ type:'decimal', required:true },
+    currency:{ type:'string', default:'EGP' },
+    purpose:{ type:'text' },
+    related_event_id:{ type:'uuid', ref:'events.event_id', nullable:true },
+    // Workflow: draft → submitted → financial_review → approved/rejected → admin_review → final
+    status:{ type:'enum', values:[
+      'draft','submitted','financial_review','approved','rejected','admin_review','final_approved','paid','cancelled'
+    ], default:'draft'},
+    financial_reviewer_id:{ type:'uuid', nullable:true },
+    financial_reviewed_at:{ type:'datetime', nullable:true },
+    financial_notes:{ type:'text', nullable:true },
+    admin_reviewer_id:{ type:'uuid', nullable:true },
+    admin_reviewed_at:{ type:'datetime', nullable:true },
+    admin_notes:{ type:'text', nullable:true },
+    created_at:{ type:'datetime' }
+  }};
+
+  /* ----- Birthday reminders (computed cache) ----- */
+  S.birthday_reminders = { fields: {
+    reminder_id:{ type:'uuid', pk:true },
+    church_id:{ type:'uuid', ref:'churches.church_id' },
+    member_id:{ type:'uuid', ref:'members.member_id' },
+    upcoming_at:{ type:'date' },
+    notified_servant:{ type:'boolean', default:false },
+    created_at:{ type:'datetime' }
+  }};
+})();
+
+
+/* ===== FAMILY-CENTERED SYSTEM (Phase 10) ===== */
+(function(){
+  const S = window.SCHEMA;
+  S.families = { fields: {
+    family_id:{ type:'uuid', pk:true },
+    church_id:{ type:'uuid', ref:'churches.church_id', required:true },
+    family_code:{ type:'string', unique:true }, // FAM-YYYY-NNNN
+    family_name:{ type:'string', required:true },
+    area:{ type:'string' },
+    city:{ type:'string' },
+    address:{ type:'string' },
+    latitude:{ type:'decimal', nullable:true },
+    longitude:{ type:'decimal', nullable:true },
+    primary_phone:{ type:'string' },
+    secondary_phone:{ type:'string' },
+    family_status:{ type:'enum', values:['active','inactive','at_risk'], default:'active' },
+    registration_date:{ type:'datetime' },
+    notes:{ type:'text' },
+    father_name:{ type:'string' },
+    father_birth_date:{ type:'date' },
+    father_phone:{ type:'string' },
+    father_job:{ type:'string' },
+    father_spiritual_status:{ type:'string' },
+    father_notes:{ type:'text' },
+    mother_name:{ type:'string' },
+    mother_birth_date:{ type:'date' },
+    mother_phone:{ type:'string' },
+    mother_job:{ type:'string' },
+    mother_spiritual_status:{ type:'string' },
+    mother_notes:{ type:'text' },
+    followup_notes:{ type:'text' },
+    visitation_notes:{ type:'text' },
+    special_conditions:{ type:'text' },
+    emergency_notes:{ type:'text' },
+    created_at:{ type:'datetime' }
+  }};
+
+  // Add family linkage to members schema
+  if (S.members && S.members.fields){
+    S.members.fields.family_id   = { type:'uuid', ref:'families.family_id', nullable:true };
+    S.members.fields.family_role = { type:'enum', values:['father','mother','child','other'], nullable:true };
+  }
+
+  S.pending_transitions = { fields: {
+    transition_id:{ type:'uuid', pk:true },
+    church_id:{ type:'uuid', ref:'churches.church_id', required:true },
+    member_id:{ type:'uuid', ref:'members.member_id', required:true },
+    family_id:{ type:'uuid', ref:'families.family_id', nullable:true },
+    current_stage:{ type:'string', nullable:true },
+    suggested_stage:{ type:'string' },
+    current_class_id:{ type:'uuid', nullable:true },
+    suggested_class_id:{ type:'uuid', nullable:true },
+    approved_class_id:{ type:'uuid', nullable:true },
+    approved_servant_id:{ type:'uuid', nullable:true },
+    reason:{ type:'string' },
+    age_years:{ type:'int' },
+    status:{ type:'enum', values:['pending','approved','rejected'], default:'pending' },
+    reviewer_id:{ type:'uuid', nullable:true },
+    reviewed_at:{ type:'datetime', nullable:true },
+    reject_reason:{ type:'string', nullable:true },
+    created_at:{ type:'datetime' }
+  }};
+})();

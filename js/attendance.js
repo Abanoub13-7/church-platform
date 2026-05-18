@@ -65,6 +65,11 @@
         DB.update('members','member_id',memberId,{ first_visit_at: new Date().toISOString() });
       }
 
+      // v6 spine: recompute risk for this member after every attendance write
+      try { if (window.recalculateRisk) window.recalculateRisk(memberId); } catch(_){}
+      // Behavior wiring: notify Lifecycle Engine
+      try { if (window.Lifecycle) Lifecycle.onAttendanceRecorded(memberId); } catch(_){}
+
       return { ok:true, record, is_late };
     },
 
@@ -96,6 +101,20 @@
           else DB.update('event_bookings','booking_id',b.booking_id,{ booking_status:'attended' });
         });
       }
+      // v6 spine: closing a session means all absentees are now known —
+      // recompute risk for every member relevant to this session.
+      try {
+        if (window.RiskEngine){
+          const members = DB.findAll('members').filter(m =>
+            !session.class_id || m.service_class_id === session.class_id
+          );
+          members.forEach(m => {
+            window.recalculateRisk(m.member_id);
+            try { window.Lifecycle && Lifecycle.onAttendanceRecorded(m.member_id); } catch(_){}
+          });
+        }
+      } catch(_){}
+
       return session;
     },
 

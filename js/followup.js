@@ -3,7 +3,10 @@
   if (!App.init('followup')) return;
 
   function render(){
-    const tasks = DB.all('followup_tasks').sort((a,b)=> new Date(b.created_at)-new Date(a.created_at));
+    // v6 spine: ensure risk scores + high-risk auto follow-ups are fresh
+    try { if (window.RiskEngine) window.RiskEngine.recalculateAll(); } catch(_){}
+
+    const tasks = DB.findAll('followups').sort((a,b)=> new Date(b.created_at)-new Date(a.created_at));
     const open = tasks.filter(t => ['open','in_progress'].includes(t.status));
     const escalated = tasks.filter(t => t.status==='escalated' || t.escalation_level>0);
     App.render(`
