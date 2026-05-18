@@ -49,40 +49,77 @@
     </div>
   </div>
 
-  <script>
-    DB.all('churches'); // seed
-    document.getElementById('login-form').addEventListener('submit', async e => {
-      e.preventDefault();
-      const btn = e.target.querySelector('button[type="submit"]');
-      const err = document.getElementById('error');
-      err.textContent = '';
-      btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> جاري التحقق...';
-      try{
-        const email = document.getElementById('email').value.trim();
-        const pwd = document.getElementById('password').value;
-        const remember = document.getElementById('remember').checked;
-        const result = await Auth.login(email, pwd, remember);
-        if (!result.ok){
-          err.textContent = result.error;
-        } else {
-          location.href = result.session.role === 'super_admin' ? 'super-admin.html' : 'dashboard.html';
-        }
-      } finally {
-        btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-right-to-bracket"></i> دخول';
-      }
-    });
-  </script>
+  <!-- v19 FIX: load core scripts BEFORE inline handler so DB/Auth exist -->
   <script src="data/schema.js"></script>
   <script src="data/schema-v12.js"></script>
   <script src="data/schema-v13.js"></script>
   <script src="data/schema-v14.js"></script>
   <script src="data/mock-data.js"></script>
   <script src="js/db.js"></script>
-  <script src="js/auth.js"></script>
   <script src="js/security.js"></script>
+  <script src="js/auth.js"></script>
   <script src="js/permissions.js"></script>
   <script src="js/audit.js"></script>
   <script src="js/performance.js"></script>
+
+  <script>
+    (function(){
+      function boot(){
+        try{
+          if (!window.DB || !window.Auth){
+            document.getElementById('error').textContent =
+              'فشل تحميل النظام — يُرجى تحديث الصفحة';
+            return;
+          }
+          try{ DB.all('churches'); }catch(_){ /* seed */ }
+
+          // If already logged in, skip the form
+          try{
+            const existing = Auth.session();
+            if (existing){
+              location.href = existing.role === 'super_admin'
+                ? 'super-admin.html' : 'dashboard.html';
+              return;
+            }
+          }catch(_){}
+
+          const form = document.getElementById('login-form');
+          if (!form) return;
+          form.addEventListener('submit', async function(e){
+            e.preventDefault();
+            const btn = e.target.querySelector('button[type="submit"]');
+            const err = document.getElementById('error');
+            err.textContent = '';
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> جاري التحقق...';
+            try{
+              const email = document.getElementById('email').value.trim();
+              const pwd = document.getElementById('password').value;
+              const remember = document.getElementById('remember').checked;
+              const result = await Auth.login(email, pwd, remember);
+              if (!result || !result.ok){
+                err.textContent = (result && result.error) || 'فشل تسجيل الدخول';
+              } else {
+                location.href = result.session.role === 'super_admin'
+                  ? 'super-admin.html' : 'dashboard.html';
+              }
+            }catch(ex){
+              err.textContent = 'خطأ غير متوقع: ' + (ex && ex.message || ex);
+            }finally{
+              btn.disabled = false;
+              btn.innerHTML = '<i class="fa-solid fa-right-to-bracket"></i> دخول';
+            }
+          });
+        }catch(ex){
+          try{ document.getElementById('error').textContent =
+            'خطأ في تحميل صفحة الدخول: ' + (ex && ex.message || ex); }catch(_){}
+        }
+      }
+      if (document.readyState === 'loading'){
+        document.addEventListener('DOMContentLoaded', boot);
+      } else { boot(); }
+    })();
+  </script>
 
 </body>
 </html>

@@ -729,3 +729,18 @@ Goals: stabilize bootstrap, fix blank pages, restore admin/supervisor access.
 ### Cleanup
 - Removed obsolete CHANGELOG-v15.md and CHANGELOG-v16.md (consolidated here).
 - File count: 97 (under 100 limit).
+
+## v19 — Critical Authentication Recovery (Stability Patch)
+### Fixed
+- **LOGIN BLOCKER**: `login.html` had its inline submit handler placed *before* the script tags that load `db.js`, `auth.js`, `security.js` and `permissions.js`. This caused `DB`/`Auth` to be `undefined` at parse time, the seed call to throw, the submit listener to never register, and every login attempt to fail silently. Script includes are now loaded **before** the inline handler.
+- Login boot is wrapped in DOMContentLoaded + try/catch so a missing dependency surfaces a readable error instead of a blank screen.
+- If a valid session already exists, `login.html` now redirects to the proper dashboard (super-admin vs church) instead of showing the form.
+- Inline handler now defensively reads `result?.error` and reports unexpected exceptions in the visible error area.
+
+### Preserved (no regressions)
+- Service Layer (`services.bundle.js`), Event Bus (`core.eventbus.js`), Family Domain modules and Engines bundle remain untouched.
+- Permission matrix, scoped permissions, role hierarchy and sidebar filtering are unchanged — admin and service-supervisor access paths verified.
+- `App.init` idempotency guards, page-id matching and fail-safe rendering from v18 are kept.
+
+### File count
+- Total project files: 97 (well under the 100 limit). No files added or removed in v19.
