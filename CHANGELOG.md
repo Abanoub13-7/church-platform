@@ -676,3 +676,56 @@ Church → Services → Stages → Groups → Classes → Members — مدعوم
 button.onclick = () => FamilyService.calculateFamilyRisk(familyId);
 Bus.on(Events.ATTENDANCE_RISK_DETECTED, p => renderAlert(p));
 ```
+
+## v18 — Stability + Permission Fix (2026-05-18)
+
+Goals: stabilize bootstrap, fix blank pages, restore admin/supervisor access.
+
+### Bootstrap & Script Order
+- Standardized script load order across all 34 HTML pages:
+  schemas -> mock-data -> db -> auth/security/permissions/hierarchy/audit/impersonation/performance
+  -> risk -> core.eventbus -> engines.bundle -> family-* engines -> services.bundle
+  -> domain modules -> app.js -> scoped/finance/ai-scope -> notifications-ui -> page script.
+- Auth / Permissions now load BEFORE engines and services (was reversed).
+- `core.eventbus.js` loads before `engines.bundle.js` and `services.bundle.js`.
+- `services.bundle.js` loads AFTER engines and family modules so service facades
+  resolve their dependencies at call time without race conditions.
+
+### App.init Hardening (js/app.js)
+- Added `<body data-page="...">` guard. Bundled IIFEs whose pageId does NOT
+  match the current document are skipped — fixes the doubled-sidebar /
+  wrong-page-render bug caused by `pages.bundle.js` running every IIFE.
+- Added idempotent `window.__APP_PAGE__` lock; subsequent App.init calls
+  for other pages return early.
+- Wrapped entire init in try/catch — a single module crash no longer blanks
+  the page.
+- `renderLayout` only runs if `.app` shell is not yet in the DOM.
+- DOMContentLoaded handlers (Billing, Backup, WhiteLabel, WorkflowEngine,
+  AIEngine) wrapped in nested try/catch + existence checks.
+
+### Unified Namespace
+- Introduced non-breaking aggregator `window.ChurchApp` with live getters
+  for `core` (Auth/Security/DB/Bus/Events) plus slots for `services`,
+  `engines`, `repositories`, `domains`. Existing globals untouched.
+
+### Page-Specific Loaders
+- `pages.bundle.js` is loaded ONLY on the pages it owns
+  (ai-ops, analytics, attendance, backups, billing, knowledge-base,
+   my-billing, platform-health, security, services, subscriptions,
+   supervisor, support, tenants, usage-analytics, white-label).
+- All other pages load their dedicated `js/<page>.js` only — preventing
+  cross-page render collisions.
+- `login.html` reduced to the minimal auth chain; `index.html` carries no
+  modules (pure redirect).
+
+### Permissions / Roles
+- Role matrix preserved. Verified `church_admin` has every capability
+  (grantAll) and `service_supervisor` retains dashboard, members, attendance,
+  follow-up, workflows, AI insights, reports.
+- Sidebar navigation entries for service_supervisor: dashboard, supervisor
+  workspace, families, transitions, services, members, attendance, events,
+  followup, ai-insights, analytics, notifications, support, knowledge-base.
+
+### Cleanup
+- Removed obsolete CHANGELOG-v15.md and CHANGELOG-v16.md (consolidated here).
+- File count: 97 (under 100 limit).

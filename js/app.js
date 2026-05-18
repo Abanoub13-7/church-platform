@@ -178,31 +178,50 @@
     })[r] || r;
   }
 
-  /* === PAGE BOOTSTRAP === */
+
+  /* === PAGE BOOTSTRAP (v18 — stable + idempotent) === */
   window.App = {
     init(pageId, requiredRoles){
-      if (!Auth.require(requiredRoles)) return false;
-      renderLayout(pageId);
-      // run permission-driven DOM hiding after layout render
-      setTimeout(() => { try{ Permissions.applyDomGuards(); }catch(_){} }, 0);
-      return true;
+      try{
+        const declared = document.body && document.body.dataset && document.body.dataset.page;
+        if (declared && pageId && declared !== pageId) return false;
+        if (window.__APP_PAGE__ && window.__APP_PAGE__ !== pageId) return false;
+        if (!window.Auth || !Auth.require(requiredRoles)) return false;
+        window.__APP_PAGE__ = pageId;
+        if (!document.querySelector('.app')) renderLayout(pageId);
+        setTimeout(() => { try{ window.Permissions && Permissions.applyDomGuards(); }catch(_){} }, 0);
+        return true;
+      }catch(err){ try{ console.warn('[App.init]', pageId, err); }catch(_){} return false; }
     },
     content(){ return document.getElementById('page-content'); },
     render(html){
-      App.content().innerHTML = html;
-      try{ Permissions.applyDomGuards(App.content()); }catch(_){}
+      const c = App.content(); if (!c) return;
+      c.innerHTML = html;
+      try{ window.Permissions && Permissions.applyDomGuards(c); }catch(_){}
     }
   };
 
-  // Run workflow engine + AI on app start (every page load)
+  /* === Unified namespace (non-breaking aggregator) === */
+  window.ChurchApp = window.ChurchApp || {};
+  Object.assign(window.ChurchApp, {
+    core: { get Auth(){return window.Auth;}, get Security(){return window.Security;}, get DB(){return window.DB;}, get Bus(){return window.Bus;}, get Events(){return window.Events;} },
+    services:     window.ChurchApp.services     || {},
+    engines:      window.ChurchApp.engines      || {},
+    repositories: window.ChurchApp.repositories || {},
+    domains:      window.ChurchApp.domains      || {}
+  });
+
+  // Run workflow engine + AI on app start (every page load) — fully fail-safe
   window.addEventListener('DOMContentLoaded', () => {
-    const s = Auth.session(); if (!s) return;
-    try{ window.Billing && Billing.runLifecycle(); }catch(_){}
-    try{ window.Backup && Backup.schedule(); }catch(_){}
-    try{ window.WhiteLabel && WhiteLabel.applyForCurrent(); }catch(_){}
-    if (window.WorkflowEngine && s.role !== 'super_admin'){
-      try{ WorkflowEngine.runAll(); }catch(_){}
-      try{ AIEngine.recomputeAll(); }catch(_){}
-    }
+    try{
+      const s = window.Auth && Auth.session(); if (!s) return;
+      try{ window.Billing && Billing.runLifecycle && Billing.runLifecycle(); }catch(_){}
+      try{ window.Backup  && Backup.schedule    && Backup.schedule(); }catch(_){}
+      try{ window.WhiteLabel && WhiteLabel.applyForCurrent && WhiteLabel.applyForCurrent(); }catch(_){}
+      if (s.role !== 'super_admin'){
+        try{ window.WorkflowEngine && WorkflowEngine.runAll && WorkflowEngine.runAll(); }catch(_){}
+        try{ window.AIEngine && AIEngine.recomputeAll && AIEngine.recomputeAll(); }catch(_){}
+      }
+    }catch(_){}
   });
 })();
