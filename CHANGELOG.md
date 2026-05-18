@@ -646,3 +646,33 @@ Church → Services → Stages → Groups → Classes → Members — مدعوم
 - `services-page.js` يفتح Workspace بشكل افتراضي مع زر للرجوع للهيكل التقليدي.
 - `supervisor-page.js` يضيف Health Score Cards + AI Insights.
 - `finance.js` تمت حمايته بـ `FinanceIsolation.guardFinancePage()`.
+
+
+## v17 — Service Layer + Event Bus Refactor
+
+**Architecture:** Page-Based Logic ➜ Enterprise Operational Architecture. Tech stack unchanged (vanilla HTML/CSS/JS, RTL Arabic).
+
+### New files (2)
+- `js/core.eventbus.js` — `window.Bus` (on/once/off/emit/emitAsync) + `window.Events` catalog. Bridges `DB.on(insert/update/remove)` into domain events (FAMILY_*, ATTENDANCE_MARKED, TASK_*, NOTIFICATION_SENT, AI_PATTERN_DETECTED, family movement events).
+- `js/services.bundle.js` — single bundle exposing:
+  - **Repositories**: `Repo.Family`, `Repo.Member`, `Repo.Attendance` (thin DB facades).
+  - **Services**: `FamilyService`, `AttendanceService`, `WorkflowService`, `NotificationService`, `RiskService`, `AIService`, `AuthService`, `MemberService` — façades over existing engines (`Family`, `Rel`, `FamilyRisk`, `FamilyAttendance`, `FamilyAI`, `FamilyWorkflows`, `Auth`). All required functions per spec implemented.
+  - **Cross-module listeners**: ATTENDANCE_MARKED ➜ absence-risk check; ATTENDANCE_RISK_DETECTED ➜ follow-up + notification + AI recs; FAMILY_RISK_CHANGED ➜ escalation + critical alert; TASK_CREATED ➜ assignee notification; FAMILY_UPDATED ➜ AI snapshot; FAMILY_SPLIT/MERGED/TRANSFERRED/GUARDIAN_CHANGED ➜ timeline notifications.
+
+### Modified files
+- 33 HTML pages: injected `<script src="js/core.eventbus.js">` and `<script src="js/services.bundle.js">` immediately after `js/db.js` so the bus and services are available before every page module loads.
+
+### Preserved
+- All existing modules (`family-core.js`, `family-risk.js`, `family-workflows.js`, `notifications.js`, `followup.js`, `engines.bundle.js`, etc.) untouched. Services delegate to them — no business logic duplicated or rewritten.
+- All Phase 1 (v15) and Phase 2 (v16) workflows, schemas, RTL Arabic UI, and operational flows intact.
+
+### File count
+- Total project files: **99 / 100** (within enterprise limit).
+
+### Usage pattern (for new UI code)
+```js
+// BAD: button.onclick = () => { family.risk = calculateRisk(); };
+// GOOD:
+button.onclick = () => FamilyService.calculateFamilyRisk(familyId);
+Bus.on(Events.ATTENDANCE_RISK_DETECTED, p => renderAlert(p));
+```
