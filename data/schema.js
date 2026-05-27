@@ -735,3 +735,585 @@ window.SCHEMA = {
     created_at:{ type:'datetime' }
   }};
 })();
+
+/* ============================================================
+   MERGED SCHEMAS (v12..v15) — previously separate files
+   Consolidated for file-count discipline. Loaded as part of schema.js.
+   ============================================================ */
+
+/* ----- schema-v12 ----- */
+/* ============================================================
+   SCHEMA v12 — PHASE 1–6 ENHANCEMENTS (additive, non-breaking)
+   - Families: relationships table + visitations + expanded status
+   - Hierarchy: grades + small_groups
+   - Attendance: status enum + expectations roster + offline queue
+                 + anti-fraud fields (geo / device / ip)
+   - Spiritual: sacraments, milestones, mentorships, journeys
+   - Follow-up: expanded action enum + outcomes + journey steps
+   Load AFTER data/schema.js in every HTML page.
+   ============================================================ */
+(function () {
+  if (!window.SCHEMA) {
+    console.warn('[schema-v12] window.SCHEMA missing — load data/schema.js first');
+    return;
+  }
+  const S = window.SCHEMA;
+
+  /* ---------- FAMILIES (Phase 1+2) ---------- */
+  S.family_relationships = { fields: {
+    rel_id:           { type:'uuid', pk:true },
+    church_id:        { type:'uuid', ref:'churches.church_id', required:true },
+    family_id:        { type:'uuid', ref:'families.family_id', required:true },
+    member_id:        { type:'uuid', ref:'members.member_id', required:true },
+    relationship_kind:{ type:'enum', values:['father','mother','son','daughter','relative','guardian'] },
+    is_primary:       { type:'boolean', default:false },
+    created_at:       { type:'datetime' }
+  }, constraints: ['UNIQUE(family_id, member_id, relationship_kind)'] };
+
+  S.family_visitations = { fields: {
+    visit_id:     { type:'uuid', pk:true },
+    church_id:    { type:'uuid', ref:'churches.church_id', required:true },
+    family_id:    { type:'uuid', ref:'families.family_id', required:true },
+    performed_by: { type:'uuid', ref:'users.user_id' },
+    performed_at: { type:'datetime' },
+    outcome:      { type:'enum', values:['completed','partial','no_answer','rescheduled','emergency'] },
+    notes:        { type:'text' },
+    created_at:   { type:'datetime' }
+  }};
+
+  // Expand family_status enum (additive: keep old values, add new)
+  if (S.families && S.families.fields && S.families.fields.family_status) {
+    const f = S.families.fields.family_status;
+    ['new','high_risk','needs_visitation','spiritually_disconnected'].forEach(v => {
+      if (!f.values.includes(v)) f.values.push(v);
+    });
+  }
+
+  // Add primary parent FKs on families (replaces string-only father_name/mother_name)
+  if (S.families && S.families.fields) {
+    Object.assign(S.families.fields, {
+      father_member_id: { type:'uuid', ref:'members.member_id', nullable:true },
+      mother_member_id: { type:'uuid', ref:'members.member_id', nullable:true }
+    });
+  }
+
+  /* ---------- HIERARCHY (Phase 3) ---------- */
+  S.service_grades = { fields: {
+    grade_id:     { type:'uuid', pk:true },
+    church_id:    { type:'uuid', ref:'churches.church_id', required:true },
+    stage_id:     { type:'uuid', ref:'service_stages.stage_id', required:true },
+    name:         { type:'string', required:true },          // e.g. "Grade 1"
+    age_min:      { type:'int', nullable:true },
+    age_max:      { type:'int', nullable:true },
+    created_at:   { type:'datetime' }
+  }};
+
+  S.service_small_groups = { fields: {
+    small_group_id:{ type:'uuid', pk:true },
+    church_id:    { type:'uuid', ref:'churches.church_id', required:true },
+    class_id:     { type:'uuid', ref:'service_classes.class_id', required:true },
+    name:         { type:'string', required:true },
+    leader_id:    { type:'uuid', ref:'users.user_id', nullable:true },
+    created_at:   { type:'datetime' }
+  }};
+
+  // Add grade_id + small_group_id to classes and members (additive)
+  if (S.service_classes && S.service_classes.fields) {
+    Object.assign(S.service_classes.fields, {
+      grade_id: { type:'uuid', ref:'service_grades.grade_id', nullable:true }
+    });
+  }
+  if (S.members && S.members.fields) {
+    Object.assign(S.members.fields, {
+      grade_id:       { type:'uuid', ref:'service_grades.grade_id', nullable:true },
+      small_group_id: { type:'uuid', ref:'service_small_groups.small_group_id', nullable:true }
+    });
+  }
+
+  /* ---------- ATTENDANCE (Phase 4) ---------- */
+  if (S.attendance_records && S.attendance_records.fields) {
+    Object.assign(S.attendance_records.fields, {
+      status:             { type:'enum',
+                            values:['present','late','excused','online','served','visitor','partial','absent'],
+                            default:'present' },
+      location_lat:       { type:'decimal', nullable:true },
+      location_lng:       { type:'decimal', nullable:true },
+      device_id:          { type:'string',  nullable:true },
+      device_fingerprint: { type:'string',  nullable:true },
+      ip_hash:            { type:'string',  nullable:true },
+      excuse_reason:      { type:'string',  nullable:true },
+      partial_minutes:    { type:'int',     nullable:true }
+    });
+  }
+
+  S.attendance_session_expectations = { fields: {
+    expect_id:  { type:'uuid', pk:true },
+    church_id:  { type:'uuid', ref:'churches.church_id', required:true },
+    session_id: { type:'uuid', ref:'attendance_sessions.session_id', required:true },
+    member_id:  { type:'uuid', ref:'members.member_id', required:true },
+    created_at: { type:'datetime' }
+  }, constraints: ['UNIQUE(session_id, member_id)'] };
+
+  S.attendance_offline_queue = { fields: {
+    local_id:   { type:'string', pk:true },
+    church_id:  { type:'uuid', ref:'churches.church_id', required:true },
+    session_id: { type:'uuid', ref:'attendance_sessions.session_id', required:true },
+    member_id:  { type:'uuid', ref:'members.member_id', required:true },
+    payload:    { type:'json' },
+    queued_at:  { type:'datetime' },
+    synced_at:  { type:'datetime', nullable:true },
+    error:      { type:'string',   nullable:true }
+  }};
+
+  // Add geofence + late-window settings on church_settings
+  if (S.church_settings && S.church_settings.fields) {
+    Object.assign(S.church_settings.fields, {
+      geofence_lat:        { type:'decimal', nullable:true },
+      geofence_lng:        { type:'decimal', nullable:true },
+      geofence_radius_m:   { type:'int',     default: 500 },
+      attendance_window_min:{ type:'int',    default: 30 } // allow ±N min around session
+    });
+  }
+
+  /* ---------- SPIRITUAL (Phase 5) ---------- */
+  S.sacraments = { fields: {
+    sacrament_id: { type:'uuid', pk:true },
+    church_id:    { type:'uuid', ref:'churches.church_id', required:true },
+    member_id:    { type:'uuid', ref:'members.member_id', required:true },
+    kind:         { type:'enum', values:['baptism','chrismation','first_communion','marriage','ordination','confession'] },
+    date:         { type:'date' },
+    performed_by: { type:'string', nullable:true },
+    location:     { type:'string', nullable:true },
+    notes:        { type:'text',   nullable:true },
+    created_at:   { type:'datetime' }
+  }};
+
+  S.spiritual_milestones = { fields: {
+    milestone_id:{ type:'uuid', pk:true },
+    church_id:   { type:'uuid', ref:'churches.church_id', required:true },
+    member_id:   { type:'uuid', ref:'members.member_id', required:true },
+    kind:        { type:'string' }, // confession_streak | retreat | ministry_start | bible_study_complete | leadership ...
+    date:        { type:'date' },
+    notes:       { type:'text', nullable:true },
+    created_at:  { type:'datetime' }
+  }};
+
+  S.mentorships = { fields: {
+    mentorship_id:  { type:'uuid', pk:true },
+    church_id:      { type:'uuid', ref:'churches.church_id', required:true },
+    mentor_user_id: { type:'uuid', ref:'users.user_id',   required:true },
+    mentee_member_id:{type:'uuid', ref:'members.member_id', required:true },
+    started_at:     { type:'datetime' },
+    ended_at:       { type:'datetime', nullable:true },
+    status:         { type:'enum', values:['active','paused','completed','transferred'], default:'active' },
+    notes:          { type:'text', nullable:true }
+  }};
+
+  S.discipleship_journeys = { fields: {
+    journey_id: { type:'uuid', pk:true },
+    church_id:  { type:'uuid', ref:'churches.church_id', required:true },
+    member_id:  { type:'uuid', ref:'members.member_id', required:true },
+    stage:      { type:'enum', values:['seeker','new_believer','growing','serving','leading'] },
+    entered_at: { type:'datetime' },
+    notes:      { type:'text', nullable:true }
+  }};
+
+  /* ---------- FOLLOW-UP (Phase 6) ---------- */
+  if (S.followup_logs && S.followup_logs.fields && S.followup_logs.fields.action) {
+    const a = S.followup_logs.fields.action;
+    ['meeting','prayer_session','online_followup','counseling','emergency'].forEach(v => {
+      if (!a.values.includes(v)) a.values.push(v);
+    });
+  }
+
+  if (S.followup_tasks && S.followup_tasks.fields) {
+    Object.assign(S.followup_tasks.fields, {
+      outcome: { type:'enum',
+                 values:['responded','no_response','needs_escalation','recovered','re_engaged','transferred','inactive','emergency'],
+                 nullable:true }
+    });
+  }
+
+  S.member_journey_steps = { fields: {
+    step_id:      { type:'uuid', pk:true },
+    church_id:    { type:'uuid', ref:'churches.church_id', required:true },
+    member_id:    { type:'uuid', ref:'members.member_id', required:true },
+    step:         { type:'enum', values:[
+      'new','welcome','initial_followup','service_integration','small_group',
+      'spiritual_eval','regular','leadership'
+    ]},
+    entered_at:   { type:'datetime' },
+    completed_at: { type:'datetime', nullable:true },
+    owner_user_id:{ type:'uuid', ref:'users.user_id', nullable:true },
+    notes:        { type:'text', nullable:true }
+  }};
+
+  /* ---------- Bootstrap empty collections in storage ---------- */
+  if (window.DB && typeof DB._raw === 'function') {
+    [
+      'family_relationships','family_visitations',
+      'service_grades','service_small_groups',
+      'attendance_session_expectations','attendance_offline_queue',
+      'sacraments','spiritual_milestones','mentorships','discipleship_journeys',
+      'member_journey_steps'
+    ].forEach(t => { if (!DB._raw(t)) { try { DB._setRaw && DB._setRaw(t, []); } catch(e){} } });
+  }
+
+  window.SCHEMA_VERSION = 12;
+})();
+
+/* ----- schema-v13 ----- */
+/* ============================================================
+   SCHEMA v13 — FAMILY INTELLIGENCE SYSTEM (additive, non-breaking)
+   Adds:
+   - Expanded family entity fields (type, multi-status, geo, risk)
+   - Expanded relationship_kind enum + custody/authority fields
+   - family_movement_log  (transfers, splits, merges, guardian changes)
+   - family_scores        (cached attendance/risk score snapshots)
+   Load AFTER data/schema-v12.js
+   ============================================================ */
+(function(){
+  if (!window.SCHEMA){ console.warn('[schema-v13] SCHEMA missing'); return; }
+  const S = window.SCHEMA;
+
+  /* ---------- FAMILIES (extended) ---------- */
+  if (S.families && S.families.fields){
+    const f = S.families.fields;
+
+    // Expand family_status enum (additive)
+    if (f.family_status && Array.isArray(f.family_status.values)){
+      ['active','inactive','under_followup','high_risk','moved','suspended','archived']
+        .forEach(v => { if (!f.family_status.values.includes(v)) f.family_status.values.push(v); });
+    }
+
+    Object.assign(f, {
+      family_type:       { type:'enum',
+        values:['nuclear','single_parent','extended','guardian_based','orphan_care','temporary_custody','special_needs'],
+        default:'nuclear' },
+      risk_status:       { type:'enum', values:['low','medium','high','critical'], default:'low' },
+      spiritual_status:  { type:'enum', values:['unknown','growing','stable','declining','disconnected'], default:'unknown' },
+      financial_status:  { type:'enum', values:['unknown','consistent','irregular','dependent','assisted'], default:'unknown' },
+      service_status:    { type:'enum', values:['unknown','serving','partial','inactive'], default:'unknown' },
+      emergency_status:  { type:'enum', values:['none','watch','active'], default:'none' },
+      geo_lat:           { type:'decimal', nullable:true },
+      geo_lng:           { type:'decimal', nullable:true },
+      photo_url:         { type:'string',  nullable:true },
+      primary_guardian_id:   { type:'uuid', ref:'members.member_id', nullable:true },
+      secondary_guardian_id: { type:'uuid', ref:'members.member_id', nullable:true },
+      last_activity_at:  { type:'datetime', nullable:true }
+    });
+  }
+
+  /* ---------- FAMILY_RELATIONSHIPS (extended) ---------- */
+  if (S.family_relationships && S.family_relationships.fields){
+    const rk = S.family_relationships.fields.relationship_kind;
+    if (rk && Array.isArray(rk.values)){
+      ['grandparent','sibling','foster_parent','step_parent','custodian']
+        .forEach(v => { if (!rk.values.includes(v)) rk.values.push(v); });
+    }
+    Object.assign(S.family_relationships.fields, {
+      custody_type:           { type:'enum',
+        values:['full','shared','temporary','emergency','foster','none'], default:'none' },
+      custody_start:          { type:'date',     nullable:true },
+      custody_end:            { type:'date',     nullable:true },
+      authority_level:        { type:'enum', values:['none','limited','full','legal'], default:'none' },
+      is_emergency_contact:   { type:'boolean',  default:false },
+      is_pickup_authorized:   { type:'boolean',  default:false },
+      notes:                  { type:'text',     nullable:true }
+    });
+  }
+
+  /* ---------- FAMILY_MOVEMENT_LOG (new) ---------- */
+  S.family_movement_log = { fields:{
+    movement_id: { type:'uuid', pk:true },
+    church_id:   { type:'uuid', ref:'churches.church_id', required:true },
+    family_id:   { type:'uuid', ref:'families.family_id', required:true },
+    kind:        { type:'enum',
+      values:['transfer','address_change','split','merge','guardian_change','custody_change',
+              'service_change','attendance_pattern_change','status_change','member_added','member_removed'] },
+    from_value:  { type:'string', nullable:true },
+    to_value:    { type:'string', nullable:true },
+    related_id:  { type:'uuid',   nullable:true },
+    actor_id:    { type:'uuid',   ref:'users.user_id', nullable:true },
+    notes:       { type:'text',   nullable:true },
+    occurred_at: { type:'datetime' },
+    created_at:  { type:'datetime' }
+  }};
+
+  /* ---------- FAMILY_SCORES (new — cached) ---------- */
+  S.family_scores = { fields:{
+    score_id:               { type:'uuid', pk:true },
+    church_id:              { type:'uuid', ref:'churches.church_id', required:true },
+    family_id:              { type:'uuid', ref:'families.family_id', required:true },
+    attendance_weekly_pct:  { type:'int',  default:0 },
+    attendance_monthly_pct: { type:'int',  default:0 },
+    consistency_score:      { type:'int',  default:0 },
+    parent_participation:   { type:'int',  default:0 },
+    child_participation:    { type:'int',  default:0 },
+    consecutive_absences:   { type:'int',  default:0 },
+    engagement_trend:       { type:'enum', values:['rising','stable','declining','unknown'], default:'unknown' },
+    attendance_risk:        { type:'int',  default:0 },
+    service_risk:           { type:'int',  default:0 },
+    financial_risk:         { type:'int',  default:0 },
+    followup_risk:          { type:'int',  default:0 },
+    stability_risk:         { type:'int',  default:0 },
+    risk_total:             { type:'int',  default:0 },
+    risk_level:             { type:'enum', values:['low','medium','high','critical'], default:'low' },
+    stability_score:        { type:'int',  default:100 },
+    computed_at:            { type:'datetime' }
+  }, constraints:['UNIQUE(family_id)'] };
+})();
+
+/* ----- schema-v14 ----- */
+/* ============================================================
+   SCHEMA v14 — FAMILY INTELLIGENCE SYSTEM (Phase 2, additive)
+   Adds:
+   - family_spiritual_records  (sacraments, prayer, classes, growth)
+   - family_serving_assignments (ministry roles per member)
+   - family_financial_records  (tithes/donations/assistance)
+   - family_emergency_contacts (non-member contacts + comms log)
+   - family_custody_legal      (legal custody docs/orders)
+   - family_workflow_triggers  (automation rule log)
+   - family_ai_insights        (heuristic AI snapshots)
+   Load AFTER data/schema-v13.js
+   ============================================================ */
+(function(){
+  if (!window.SCHEMA){ console.warn('[schema-v14] SCHEMA missing'); return; }
+  const S = window.SCHEMA;
+
+  S.family_spiritual_records = { fields:{
+    record_id:    { type:'uuid', pk:true },
+    church_id:    { type:'uuid', ref:'churches.church_id', required:true },
+    family_id:    { type:'uuid', ref:'families.family_id', required:true },
+    member_id:    { type:'uuid', ref:'members.member_id', nullable:true },
+    kind:         { type:'enum',
+      values:['baptism','communion','confession','confirmation','marriage','prayer_life',
+              'bible_class','sunday_school','retreat','spiritual_father','other'] },
+    status:       { type:'enum', values:['scheduled','completed','overdue','none'], default:'none' },
+    score:        { type:'int', default:0 },
+    occurred_at:  { type:'date', nullable:true },
+    next_due_at:  { type:'date', nullable:true },
+    notes:        { type:'text', nullable:true },
+    created_at:   { type:'datetime' }
+  }};
+
+  S.family_serving_assignments = { fields:{
+    assignment_id:{ type:'uuid', pk:true },
+    church_id:    { type:'uuid', ref:'churches.church_id', required:true },
+    family_id:    { type:'uuid', ref:'families.family_id', required:true },
+    member_id:    { type:'uuid', ref:'members.member_id', required:true },
+    ministry:     { type:'string' },
+    role:         { type:'string', nullable:true },
+    status:       { type:'enum', values:['active','paused','ended'], default:'active' },
+    started_at:   { type:'date', nullable:true },
+    ended_at:     { type:'date', nullable:true },
+    hours_per_month:{ type:'int', default:0 },
+    notes:        { type:'text', nullable:true },
+    created_at:   { type:'datetime' }
+  }};
+
+  S.family_financial_records = { fields:{
+    record_id:    { type:'uuid', pk:true },
+    church_id:    { type:'uuid', ref:'churches.church_id', required:true },
+    family_id:    { type:'uuid', ref:'families.family_id', required:true },
+    kind:         { type:'enum', values:['tithe','donation','pledge','assistance_in','assistance_out','other'] },
+    amount:       { type:'decimal', default:0 },
+    currency:     { type:'string', default:'EGP' },
+    occurred_at:  { type:'date' },
+    method:       { type:'enum', values:['cash','bank','online','in_kind','other'], default:'cash' },
+    notes:        { type:'text', nullable:true },
+    created_at:   { type:'datetime' }
+  }};
+
+  S.family_emergency_contacts = { fields:{
+    contact_id:   { type:'uuid', pk:true },
+    church_id:    { type:'uuid', ref:'churches.church_id', required:true },
+    family_id:    { type:'uuid', ref:'families.family_id', required:true },
+    name:         { type:'string' },
+    phone:        { type:'string', nullable:true },
+    relation:     { type:'string', nullable:true },
+    priority:     { type:'int', default:1 },
+    is_pickup_authorized:{ type:'boolean', default:false },
+    notes:        { type:'text', nullable:true },
+    created_at:   { type:'datetime' }
+  }};
+
+  S.family_emergency_log = { fields:{
+    log_id:       { type:'uuid', pk:true },
+    church_id:    { type:'uuid', ref:'churches.church_id', required:true },
+    family_id:    { type:'uuid', ref:'families.family_id', required:true },
+    severity:     { type:'enum', values:['info','warn','urgent','critical'], default:'info' },
+    channel:      { type:'enum', values:['call','sms','whatsapp','visit','email','in_person'], default:'call' },
+    subject:      { type:'string' },
+    body:         { type:'text', nullable:true },
+    actor_id:     { type:'uuid', ref:'users.user_id', nullable:true },
+    occurred_at:  { type:'datetime' }
+  }};
+
+  S.family_custody_legal = { fields:{
+    custody_id:   { type:'uuid', pk:true },
+    church_id:    { type:'uuid', ref:'churches.church_id', required:true },
+    family_id:    { type:'uuid', ref:'families.family_id', required:true },
+    child_id:     { type:'uuid', ref:'members.member_id', required:true },
+    guardian_id:  { type:'uuid', ref:'members.member_id', nullable:true },
+    custody_type: { type:'enum', values:['full','shared','temporary','emergency','foster','court_ordered','none'], default:'none' },
+    authority_level:{ type:'enum', values:['none','limited','full','legal'], default:'none' },
+    doc_ref:      { type:'string', nullable:true },
+    doc_url:      { type:'string', nullable:true },
+    valid_from:   { type:'date', nullable:true },
+    valid_until:  { type:'date', nullable:true },
+    status:       { type:'enum', values:['active','expired','revoked','pending'], default:'active' },
+    notes:        { type:'text', nullable:true },
+    created_at:   { type:'datetime' }
+  }};
+
+  S.family_workflow_triggers = { fields:{
+    trigger_id:   { type:'uuid', pk:true },
+    church_id:    { type:'uuid', ref:'churches.church_id', required:true },
+    family_id:    { type:'uuid', ref:'families.family_id', required:true },
+    rule:         { type:'string' },
+    condition:    { type:'text', nullable:true },
+    action:       { type:'string' },
+    fired_at:     { type:'datetime' },
+    payload:      { type:'json', nullable:true }
+  }};
+
+  S.family_ai_insights = { fields:{
+    insight_id:   { type:'uuid', pk:true },
+    church_id:    { type:'uuid', ref:'churches.church_id', required:true },
+    family_id:    { type:'uuid', ref:'families.family_id', required:true },
+    category:     { type:'enum', values:['attendance','spiritual','serving','financial','risk','relationships','general'], default:'general' },
+    severity:     { type:'enum', values:['info','suggestion','warn','urgent'], default:'info' },
+    headline:     { type:'string' },
+    detail:       { type:'text', nullable:true },
+    confidence:   { type:'int', default:60 },
+    computed_at:  { type:'datetime' }
+  }};
+
+  console.log('[schema-v14] loaded — Phase 2 family tables registered');
+})();
+
+/* ----- schema-v15 ----- */
+/* ============================================================
+   SCHEMA v15 — ENTERPRISE ATTENDANCE ECOSYSTEM (additive)
+   Domains: Liturgies | Meetings | Sunday School | Events |
+            Visitors | QR Sessions | Attendance Intelligence
+   Load AFTER data/schema-v14.js
+   ============================================================ */
+(function(){
+  if (!window.SCHEMA){ console.warn('[schema-v15] SCHEMA missing'); return; }
+  const S = window.SCHEMA;
+
+  /* --- Liturgies --- */
+  S.liturgies = { fields:{
+    liturgy_id:   { type:'uuid', pk:true },
+    church_id:    { type:'uuid', ref:'churches.church_id', required:true },
+    title:        { type:'string', required:true },
+    liturgy_type: { type:'enum',
+      values:['friday','sunday','feast','holiday','fasting','memorial','special','custom'],
+      default:'custom' },
+    recurrence:   { type:'enum', values:['none','weekly_friday','weekly_sunday'], default:'none' },
+    starts_at:    { type:'datetime', required:true },
+    ends_at:      { type:'datetime', nullable:true },
+    session_id:   { type:'uuid', ref:'attendance_sessions.session_id', nullable:true },
+    created_by:   { type:'uuid', nullable:true },
+    notes:        { type:'text', nullable:true },
+    created_at:   { type:'datetime' }
+  }};
+
+  /* --- Meetings --- */
+  S.meetings = { fields:{
+    meeting_id:   { type:'uuid', pk:true },
+    church_id:    { type:'uuid', ref:'churches.church_id', required:true },
+    title:        { type:'string', required:true },
+    meeting_type: { type:'enum',
+      values:['youth','university_graduates','servants','men','women',
+              'secondary','preparatory','kids','custom'], default:'custom' },
+    recurrence:   { type:'enum',
+      values:['none','weekly','biweekly','monthly'], default:'weekly' },
+    weekday:      { type:'int', nullable:true }, // 0=Sun..6=Sat
+    starts_at:    { type:'datetime', required:true },
+    ends_at:      { type:'datetime', nullable:true },
+    session_id:   { type:'uuid', ref:'attendance_sessions.session_id', nullable:true },
+    service_stage:{ type:'string', nullable:true },
+    leaders:      { type:'json', nullable:true },
+    created_by:   { type:'uuid', nullable:true },
+    created_at:   { type:'datetime' }
+  }};
+
+  /* --- Sunday School (auto-Friday, Nursery → Secondary) --- */
+  S.sunday_school_sessions = { fields:{
+    ss_id:        { type:'uuid', pk:true },
+    church_id:    { type:'uuid', ref:'churches.church_id', required:true },
+    stage:        { type:'enum', values:['nursery','primary','preparatory','secondary'], required:true },
+    occurs_on:    { type:'date', required:true },
+    session_id:   { type:'uuid', ref:'attendance_sessions.session_id', nullable:true },
+    teacher_id:   { type:'uuid', nullable:true },
+    created_at:   { type:'datetime' }
+  }};
+
+  /* --- Visitors --- */
+  S.visitors = { fields:{
+    visitor_id:   { type:'uuid', pk:true },
+    church_id:    { type:'uuid', ref:'churches.church_id', nullable:true },
+    full_name:    { type:'string', required:true },
+    phone:        { type:'string', nullable:true },
+    invited_by:   { type:'uuid', ref:'members.member_id', nullable:true },
+    home_church:  { type:'string', nullable:true },
+    visit_count:  { type:'int', default:0 },
+    first_visit_at:{type:'datetime', nullable:true },
+    last_visit_at:{ type:'datetime', nullable:true },
+    notes:        { type:'text', nullable:true },
+    created_at:   { type:'datetime' }
+  }};
+
+  S.visitor_attendance = { fields:{
+    record_id:    { type:'uuid', pk:true },
+    church_id:    { type:'uuid', nullable:true },
+    visitor_id:   { type:'uuid', ref:'visitors.visitor_id', required:true },
+    session_id:   { type:'uuid', ref:'attendance_sessions.session_id', required:true },
+    attended_at:  { type:'datetime' },
+    created_at:   { type:'datetime' }
+  }};
+
+  /* --- QR Attendance Sessions (rotating tokens) --- */
+  S.qr_attendance_sessions = { fields:{
+    qr_id:        { type:'uuid', pk:true },
+    church_id:    { type:'uuid', nullable:true },
+    session_id:   { type:'uuid', ref:'attendance_sessions.session_id', required:true },
+    token:        { type:'string', required:true },
+    rotates_every_sec:{ type:'int', default:30 },
+    expires_at:   { type:'datetime', required:true },
+    status:       { type:'enum', values:['active','expired','closed'], default:'active' },
+    created_by:   { type:'uuid', nullable:true },
+    created_at:   { type:'datetime' }
+  }};
+
+  /* --- Extended attendance record metadata (spiritual participation) --- */
+  S.attendance_spiritual_marks = { fields:{
+    mark_id:      { type:'uuid', pk:true },
+    church_id:    { type:'uuid', nullable:true },
+    record_id:    { type:'uuid', ref:'attendance_records.record_id', required:true },
+    member_id:    { type:'uuid', ref:'members.member_id', required:true },
+    communion:    { type:'bool', default:false },
+    confession:   { type:'bool', default:false },
+    created_at:   { type:'datetime' }
+  }};
+
+  /* --- Attendance Intelligence Insights --- */
+  S.attendance_intelligence = { fields:{
+    insight_id:   { type:'uuid', pk:true },
+    church_id:    { type:'uuid', nullable:true },
+    category:     { type:'enum',
+      values:['family_decline','member_disengagement','servant_inactive',
+              'risky_family','ministry_drop','recommendation'] },
+    severity:     { type:'enum', values:['info','suggestion','warn','urgent'], default:'info' },
+    family_id:    { type:'uuid', nullable:true },
+    member_id:    { type:'uuid', nullable:true },
+    headline:     { type:'string' },
+    detail:       { type:'text', nullable:true },
+    confidence:   { type:'int', default:60 },
+    detected_at:  { type:'datetime' },
+    created_at:   { type:'datetime' }
+  }};
+})();

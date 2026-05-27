@@ -25,13 +25,32 @@
       // anti-burst delay
       if (Sec) await new Promise(r=>setTimeout(r, Sec.config.RETRY_DELAY_MS));
 
-      const users = (window.DB && DB._raw('users')) || [];
-      const user = users.find(u => u.email === email && u.is_active);
+      function lookup(){
+        const users = (window.DB && DB._raw('users')) || [];
+        return users.find(u => u.email === email && u.is_active);
+      }
+
+      let user = lookup();
+      // Self-heal: if the demo user is missing because of a stale cache,
+      // run DB.repair() once and try again before failing.
+      if (!user && window.DB && typeof DB.repair === 'function'){
+        try { DB.repair(); } catch(_){}
+        user = lookup();
+      }
 
       let pwOk = false;
       if (user){
-        if (Sec) pwOk = await Sec.verifyPassword(password, user.password_hash);
-        else pwOk = (user.password_hash === password);
+        try {
+          if (Sec) pwOk = await Sec.verifyPassword(password, user.password_hash);
+          else pwOk = (user.password_hash === password);
+        } catch(_){ pwOk = false; }
+        // Final safety net: if the stored hash is corrupted/unreadable but a
+        // known plaintext demo password matches, accept it and re-seed the hash.
+        if (!pwOk && user.password_hash && typeof user.password_hash === 'string'
+            && !user.password_hash.startsWith('pbkdf2$')
+            && password === user.password_hash){
+          pwOk = true;
+        }
       }
 
       if (!user || !pwOk){
@@ -39,6 +58,7 @@
         try{ window.Audit && Audit.log('auth.login_failed', { email, severity:'warning' }); }catch(_){}
         return { ok:false, error:'بيانات الدخول غير صحيحة' };
       }
+
 
       // migrate plaintext → pbkdf2 on first successful login
       if (Sec && typeof user.password_hash === 'string' && !user.password_hash.startsWith('pbkdf2$')){

@@ -21,10 +21,21 @@
 
   /* ---------- storage helpers ---------- */
   function loadSec(){
-    try{ return JSON.parse(localStorage.getItem(SEC_KEY)) || {}; }
-    catch(_){ return {}; }
+    try{
+      const raw = localStorage.getItem(SEC_KEY);
+      if (!raw) return {};
+      const v = JSON.parse(raw);
+      return (v && typeof v === 'object') ? v : {};
+    }
+    catch(_){
+      try { localStorage.removeItem(SEC_KEY); } catch(__){}
+      return {};
+    }
   }
-  function saveSec(s){ localStorage.setItem(SEC_KEY, JSON.stringify(s)); }
+  function saveSec(s){
+    try { localStorage.setItem(SEC_KEY, JSON.stringify(s)); } catch(_){}
+  }
+
 
   /* ---------- crypto: PBKDF2-SHA256 ---------- */
   function buf2hex(buf){
@@ -57,17 +68,26 @@
   async function verifyPassword(password, stored){
     if (!stored) return false;
     if (typeof stored === 'string' && stored.startsWith('pbkdf2$')){
-      const [, iterStr, salt, expected] = stored.split('$');
-      const got = await pbkdf2(password, salt, parseInt(iterStr,10));
-      // constant-time-ish compare
-      if (got.length !== expected.length) return false;
-      let diff = 0;
-      for (let i=0;i<got.length;i++) diff |= got.charCodeAt(i) ^ expected.charCodeAt(i);
-      return diff === 0;
+      const parts = stored.split('$');
+      if (parts.length !== 4){
+        // Malformed hash — treat as legacy plaintext fallback
+        return password === stored;
+      }
+      const [, iterStr, salt, expected] = parts;
+      try {
+        const got = await pbkdf2(password, salt, parseInt(iterStr,10));
+        if (got.length !== expected.length) return false;
+        let diff = 0;
+        for (let i=0;i<got.length;i++) diff |= got.charCodeAt(i) ^ expected.charCodeAt(i);
+        return diff === 0;
+      } catch(_){
+        return false;
+      }
     }
     // legacy plaintext fallback
     return password === stored;
   }
+
 
   /* ---------- failed-login / lockout ---------- */
   function getLock(email){
@@ -98,6 +118,13 @@
   function resetFailures(email){
     setLock(email, { fails:0, locked_until:0, history:[] });
   }
+  function clearLocks(email){
+    const sec = loadSec();
+    if (!sec.locks) return;
+    if (email){ delete sec.locks[email]; }
+    else { sec.locks = {}; }
+    saveSec(sec);
+  }
 
   /* ---------- security event log ---------- */
   function logEvent(type, meta){
@@ -118,7 +145,14 @@
   /* ---------- session ---------- */
   function readSessionRaw(){
     const raw = sessionStorage.getItem(SESSION_KEY) || localStorage.getItem(SESSION_KEY);
-    return raw ? JSON.parse(raw) : null;
+    if (!raw) return null;
+    try { return JSON.parse(raw); }
+    catch(_){
+      // Corrupted session blob — wipe it so the user can log in again.
+      try { sessionStorage.removeItem(SESSION_KEY); } catch(__){}
+      try { localStorage.removeItem(SESSION_KEY); } catch(__){}
+      return null;
+    }
   }
   function writeSession(session, remember){
     (remember ? localStorage : sessionStorage).setItem(SESSION_KEY, JSON.stringify(session));
@@ -186,7 +220,7 @@
   /* ---------- public API ---------- */
   window.Security = {
     hashPassword, verifyPassword,
-    isLocked, registerFailure, resetFailures, getLock,
+    isLocked, registerFailure, resetFailures, clearLocks, getLock,
     logEvent,
     listEvents(filter){
       const sec = loadSec();

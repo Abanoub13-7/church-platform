@@ -23,6 +23,25 @@
     });
   }
 
+  // View modes — Tree / Cards / Table
+  let viewMode = localStorage.getItem('members.view') || 'cards';
+
+  function memberRisk(m){
+    const r = (window.DB && DB.find && DB.find('member_risk_scores', s => s.member_id===m.member_id)) || null;
+    const score = (r && r.score) || 0;
+    if (m.member_status === 'inactive' || m.status === 'inactive') return { color:'gray', label:'غير نشط' };
+    if (score >= 70) return { color:'red', label:'خطر مرتفع' };
+    if (score >= 40) return { color:'yellow', label:'يحتاج متابعة' };
+    return { color:'green', label:'منتظم' };
+  }
+  function attendanceRate(m){
+    try { return (window.Attendance && Attendance.memberStats) ? (Attendance.memberStats(m.member_id, 90).rate || 0) : 0; }
+    catch(_) { return 0; }
+  }
+  function initials(name){
+    return String(name||'').split(/\s+/).filter(Boolean).slice(0,2).map(w => w[0]).join('') || '?';
+  }
+
   function render(){
     const members = visibleMembers();
     const scope = Hierarchy.getScope(session);
@@ -31,18 +50,25 @@
       : `<span class="badge badge-orange">نطاق محدود: ${scope.classes.length} فصل / ${scope.services.length} خدمة</span>`;
 
     App.render(`
-      <div class="page-header">
+      <div class="page-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:1rem">
         <div>
           <h1 class="page-title">المخدومين</h1>
           <p class="page-subtitle">${members.length} مخدوم — ${scopeBadge}</p>
         </div>
-        ${Permissions.can('canManageMembers')?`
-          <button class="btn btn-accent" onclick="MembersPage.showForm()"><i class="fa-solid fa-plus"></i> مخدوم جديد</button>`:''}
+        <div style="display:flex;gap:.6rem;align-items:center;flex-wrap:wrap">
+          <div class="view-switcher" role="tablist">
+            <button data-vm="tree"  class="${viewMode==='tree' ?'is-active':''}" onclick="MembersPage.setView('tree')" title="عرض شجرة"><i class="fa-solid fa-sitemap"></i><span>الهيكل</span></button>
+            <button data-vm="cards" class="${viewMode==='cards'?'is-active':''}" onclick="MembersPage.setView('cards')" title="بطاقات"><i class="fa-solid fa-id-card"></i><span>بطاقات</span></button>
+            <button data-vm="table" class="${viewMode==='table'?'is-active':''}" onclick="MembersPage.setView('table')" title="جدول"><i class="fa-solid fa-table"></i><span>جدول</span></button>
+          </div>
+          ${Permissions.can('canManageMembers')?`
+            <button class="btn btn-accent" onclick="MembersPage.showForm()"><i class="fa-solid fa-plus"></i> مخدوم جديد</button>`:''}
+        </div>
       </div>
 
-      <div class="card mb-2">
-        <div class="grid grid-4">
-          <input class="form-control" placeholder="بحث: اسم / هاتف / هاتف ولي الأمر" value="${filter.q}" oninput="MembersPage.setFilter('q', this.value)">
+      <div class="ent-card" style="padding:1rem;margin-bottom:1rem">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:.6rem">
+          <input class="form-control" placeholder="بحث: اسم / هاتف" value="${filter.q}" oninput="MembersPage.setFilter('q', this.value)">
           <select class="form-select" onchange="MembersPage.setFilter('service', this.value)">
             <option value="">كل الخدمات</option>
             ${services().map(s=>`<option value="${s.service_id}" ${filter.service===s.service_id?'selected':''}>${s.name}</option>`).join('')}
@@ -53,45 +79,91 @@
           </select>
           <select class="form-select" onchange="MembersPage.setFilter('class', this.value)">
             <option value="">كل الفصول</option>
-            ${classes().map(c=>`<option value="${c.class_id}" ${filter.class===c.class_id?'selected':''}>${c.class_name}</option>`).join('')}
+            ${classes().map(c=>`<option value="${c.class_id}" ${filter.class===c.class_id?'selected':''}>${c.class_name||c.name}</option>`).join('')}
           </select>
         </div>
       </div>
 
-      <div class="table-wrap">
-        <table class="table">
-          <thead><tr>
-            <th>الاسم</th><th>العمر</th><th>المرحلة</th><th>الفصل</th>
-            <th>الهاتف</th><th>ولي الأمر</th><th>الخادم</th><th>الحالة</th><th></th>
-          </tr></thead>
-          <tbody>${members.length ? members.map(rowHtml).join('') :
-            '<tr><td colspan="9"><div class="empty"><i class="fa-solid fa-users-slash"></i>لا يوجد مخدومين في نطاقك</div></td></tr>'}</tbody>
-        </table>
+      <div id="members-view">
+        ${ members.length === 0
+            ? '<div class="ent-card" style="padding:3rem;text-align:center;color:var(--ent-text-2)"><i class="fa-solid fa-users-slash" style="font-size:2rem;opacity:.4;display:block;margin-bottom:.5rem"></i>لا يوجد مخدومين في نطاقك</div>'
+            : viewMode === 'tree'  ? '<div class="ent-card" id="members-tree-host"></div>'
+            : viewMode === 'cards' ? cardsHtml(members)
+            : tableHtml(members) }
       </div>
     `);
+
+    if (viewMode === 'tree' && members.length){
+      const host = document.getElementById('members-tree-host');
+      if (host && window.Hierarchy && Hierarchy.render){
+        Hierarchy.render(host, {
+          onSelect(node){ if (node && node.type==='member') MembersPage.profile(node.id); }
+        });
+      }
+    }
   }
 
-  function rowHtml(m){
-    const cls = DB.byId('service_classes','class_id', m.service_class_id);
-    const servant = m.assigned_servant_id ? DB.byId('users','user_id', m.assigned_servant_id) : null;
-    const age = Hierarchy.formatAge(m.birth_date);
-    const stage = m.stage_id ? (DB.byId('service_stages','stage_id', m.stage_id)?.name) : Hierarchy.stageLabel(m.age_stage);
-    return `<tr>
-      <td><b>${m.full_name}</b>${m.nickname?` <span class="text-muted">(${m.nickname})</span>`:''}</td>
-      <td>${age}</td>
-      <td>${stage||'—'}</td>
-      <td>${cls?.class_name||'—'}</td>
-      <td dir="ltr">${m.phone||'—'}</td>
-      <td dir="ltr">${m.parent_phone||m.father_phone||m.mother_phone||'—'}</td>
-      <td>${servant?.full_name||'—'}</td>
-      <td><span class="badge badge-${statusBadge(m.member_status)}">${statusLabel(m.member_status)}</span></td>
-      <td>
-        <button class="btn btn-ghost btn-sm" onclick="MembersPage.profile('${m.member_id}')" title="عرض"><i class="fa-solid fa-eye"></i></button>
-        ${Permissions.can('canEditMembers')?`<button class="btn btn-ghost btn-sm" onclick="MembersPage.edit('${m.member_id}')" title="تعديل"><i class="fa-solid fa-pen"></i></button>`:''}
-        <button class="btn btn-ghost btn-sm" onclick="MembersPage.qr('${m.member_id}')" title="QR"><i class="fa-solid fa-qrcode"></i></button>
-      </td>
-    </tr>`;
+  function cardsHtml(members){
+    return '<div class="member-grid">' + members.map(m => {
+      const cls = DB.byId('service_classes','class_id', m.service_class_id);
+      const servant = m.assigned_servant_id ? DB.byId('users','user_id', m.assigned_servant_id) : null;
+      const risk = memberRisk(m);
+      const rate = attendanceRate(m);
+      const phone = m.phone || m.parent_phone || m.father_phone || m.mother_phone || '';
+      return `
+        <div class="member-card">
+          <span class="status-pill ${risk.color}">${risk.label}</span>
+          <div class="mc-top">
+            <div class="mc-avatar">${initials(m.full_name)}</div>
+            <div style="min-width:0;flex:1">
+              <div class="mc-name">${m.full_name||'—'}</div>
+              <div class="mc-sub">${cls?.class_name||cls?.name||'بدون فصل'}</div>
+            </div>
+          </div>
+          <div class="mc-stats">
+            <div><b>${rate}%</b>الالتزام (90ي)</div>
+            <div><b>${Hierarchy.formatAge(m.birth_date)}</b>العمر</div>
+            <div><b>${servant?.full_name||'—'}</b>الخادم</div>
+            <div><b dir="ltr">${phone||'—'}</b>هاتف</div>
+          </div>
+          <div class="mc-actions">
+            <button class="btn btn-sm" onclick="MembersPage.profile('${m.member_id}')"><i class="fa-solid fa-eye"></i> عرض</button>
+            ${Permissions.can('canEditMembers')?`<button class="btn btn-sm" onclick="MembersPage.edit('${m.member_id}')"><i class="fa-solid fa-pen"></i></button>`:''}
+            ${phone?`<a class="btn btn-sm" href="tel:${phone}"><i class="fa-solid fa-phone"></i></a>`:''}
+          </div>
+        </div>`;
+    }).join('') + '</div>';
   }
+
+  function tableHtml(members){
+    return `<div class="ent-table-wrap"><table class="ent-table">
+      <thead><tr>
+        <th>الاسم</th><th>الفصل</th><th>الخادم</th><th>العمر</th><th>المرحلة</th>
+        <th>الالتزام</th><th>الحالة</th><th></th>
+      </tr></thead>
+      <tbody>${members.map(m => {
+        const cls = DB.byId('service_classes','class_id', m.service_class_id);
+        const servant = m.assigned_servant_id ? DB.byId('users','user_id', m.assigned_servant_id) : null;
+        const stage = m.stage_id ? (DB.byId('service_stages','stage_id', m.stage_id)?.name) : Hierarchy.stageLabel(m.age_stage);
+        const risk = memberRisk(m);
+        return `<tr>
+          <td data-label="الاسم"><b>${m.full_name||'—'}</b></td>
+          <td data-label="الفصل">${cls?.class_name||cls?.name||'—'}</td>
+          <td data-label="الخادم">${servant?.full_name||'—'}</td>
+          <td data-label="العمر">${Hierarchy.formatAge(m.birth_date)}</td>
+          <td data-label="المرحلة">${stage||'—'}</td>
+          <td data-label="الالتزام">${attendanceRate(m)}%</td>
+          <td data-label="الحالة"><span class="status-pill ${risk.color}">${risk.label}</span></td>
+          <td data-label=""><div class="row-actions">
+            <button class="btn btn-ghost btn-sm" onclick="MembersPage.profile('${m.member_id}')" title="عرض"><i class="fa-solid fa-eye"></i></button>
+            ${Permissions.can('canEditMembers')?`<button class="btn btn-ghost btn-sm" onclick="MembersPage.edit('${m.member_id}')" title="تعديل"><i class="fa-solid fa-pen"></i></button>`:''}
+            <button class="btn btn-ghost btn-sm" onclick="MembersPage.qr('${m.member_id}')" title="QR"><i class="fa-solid fa-qrcode"></i></button>
+          </div></td>
+        </tr>`;
+      }).join('')}</tbody>
+    </table></div>`;
+  }
+
 
   function statusLabel(s){ return ({active:'نشط',inactive:'غير نشط',new:'جديد',at_risk:'في خطر',left:'غادر'})[s]||s||'—'; }
   function statusBadge(s){ return ({active:'green',inactive:'gray',new:'blue',at_risk:'red',left:'gray'})[s]||'gray'; }
@@ -260,6 +332,7 @@
   }
 
   window.MembersPage = {
+    setView(v){ viewMode = v; localStorage.setItem('members.view', v); render(); },
     setFilter(k,v){ filter[k]=v; if (k==='service') filter.stage=''; render(); },
     showForm(m){ UI.modal(formHtml(m)); },
     edit(id){ UI.modal(formHtml(DB.byId('members','member_id',id))); },

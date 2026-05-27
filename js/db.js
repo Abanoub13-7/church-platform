@@ -39,15 +39,26 @@
   function load(){
     if (cache) return cache;
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw){ cache = JSON.parse(raw); }
-    else {
+    if (raw){
+      try { cache = JSON.parse(raw); }
+      catch(_){
+        console.warn('[DB] Corrupted storage detected — re-seeding from MOCK_DATA');
+        localStorage.removeItem(STORAGE_KEY);
+        cache = JSON.parse(JSON.stringify(window.MOCK_DATA || {}));
+      }
+      if (!cache || typeof cache !== 'object' || Array.isArray(cache)){
+        cache = JSON.parse(JSON.stringify(window.MOCK_DATA || {}));
+      }
+    } else {
       cache = JSON.parse(JSON.stringify(window.MOCK_DATA || {}));
     }
     ensureCoreCollections();
+    ensureDemoSeed();
     runMigrations();
     save();
     return cache;
   }
+
   function save(){ localStorage.setItem(STORAGE_KEY, JSON.stringify(cache)); }
   function uuid(prefix='id'){ return prefix+'-'+Math.random().toString(36).slice(2,10)+Date.now().toString(36).slice(-4); }
 
@@ -59,6 +70,54 @@
       'notes'
     ];
     REQUIRED.forEach(t => { if (!Array.isArray(cache[t])) cache[t] = []; });
+  }
+
+  /**
+   * ensureDemoSeed — self-healing: guarantee canonical demo users/churches
+   * exist so login works even if an older cached DB lacks them or has
+   * corrupted password_hash values.
+   */
+  function ensureDemoSeed(){
+    const MOCK = window.MOCK_DATA || {};
+    if (!Array.isArray(cache.users)) cache.users = [];
+    if (!Array.isArray(cache.churches)) cache.churches = [];
+
+    // Pull canonical demo users from MOCK_DATA (covers usr-super, usr-001..004)
+    const demoUsers = Array.isArray(MOCK.users) ? MOCK.users.slice() : [];
+    // Plus the two appended in mock-data IIFE (supervisor + finance)
+    const extraDemo = [
+      { user_id:'usr-sup1', church_id:'ch-001', full_name:'الأستاذ صموئيل (مشرف خدمة)',
+        email:'supervisor@church.local', password_hash:'sup123',
+        role:'service_supervisor', is_active:true, created_at:'2024-01-01T00:00:00Z' },
+      { user_id:'usr-fin1', church_id:'ch-001', full_name:'الأستاذة مارثا (مديرة مالية)',
+        email:'finance@church.local', password_hash:'fin123',
+        role:'financial_manager', is_active:true, created_at:'2024-01-01T00:00:00Z' }
+    ];
+    extraDemo.forEach(u => { if (!demoUsers.find(x => x.email===u.email)) demoUsers.push(u); });
+
+    demoUsers.forEach(seed => {
+      const existing = cache.users.find(u => u.email === seed.email);
+      const badHash = existing && (
+        !existing.password_hash ||
+        typeof existing.password_hash !== 'string' ||
+        (existing.password_hash.startsWith('pbkdf2$') && existing.password_hash.split('$').length !== 4)
+      );
+      if (!existing){
+        cache.users.push(JSON.parse(JSON.stringify(seed)));
+      } else {
+        // ensure account is active & has a working password
+        existing.is_active = true;
+        if (badHash) existing.password_hash = seed.password_hash;
+      }
+    });
+
+    // Ensure demo churches exist
+    const demoChurches = Array.isArray(MOCK.churches) ? MOCK.churches : [];
+    demoChurches.forEach(c => {
+      if (!cache.churches.find(x => x.church_id === c.church_id)){
+        cache.churches.push(JSON.parse(JSON.stringify(c)));
+      }
+    });
   }
 
   /**
@@ -232,6 +291,30 @@
     },
 
     reset(){ localStorage.removeItem(STORAGE_KEY); cache = null; load(); },
+
+    /** Re-seed demo users/churches into the existing cache without nuking other data. */
+    repair(){
+      try {
+        load();
+        ensureCoreCollections();
+        ensureDemoSeed();
+        save();
+        return true;
+      } catch(e){
+        try { localStorage.removeItem(STORAGE_KEY); cache = null; load(); return true; }
+        catch(_){ return false; }
+      }
+    },
+
+    /** Hard reset: wipe DB + session + security state and re-seed. */
+    factoryReset(){
+      try { localStorage.removeItem(STORAGE_KEY); } catch(_){}
+      try { localStorage.removeItem('church_session_v1'); sessionStorage.removeItem('church_session_v1'); } catch(_){}
+      try { localStorage.removeItem('church_security_v1'); } catch(_){}
+      cache = null;
+      load();
+      return true;
+    },
 
     /* simple pub/sub */
     _subs:[],

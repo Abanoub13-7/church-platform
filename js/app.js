@@ -167,6 +167,18 @@
         </div>
       </div>
     `);
+    // Mobile bottom nav — 5 most-used destinations, role-aware
+    try {
+      const bn = [
+        { id:'dashboard',  label:'الرئيسية', icon:'fa-house',           href:'dashboard.html' },
+        { id:'members',    label:'المخدومين', icon:'fa-users',          href:'members.html' },
+        { id:'attendance', label:'الحضور',    icon:'fa-clipboard-check', href:'attendance.html' },
+        { id:'followup',   label:'الافتقاد',  icon:'fa-hand-holding-heart', href:'followup.html' },
+        { id:'services',   label:'الهيكل',    icon:'fa-sitemap',         href:'services.html' }
+      ];
+      const bnHtml = bn.map(i => `<a class="${i.id===activePage?'active':''}" href="${i.href}"><i class="fa-solid ${i.icon}"></i><span>${i.label}</span></a>`).join('');
+      document.body.insertAdjacentHTML('beforeend', `<nav class="mobile-bottom-nav" aria-label="Mobile"><div class="bn-list">${bnHtml}</div></nav>`);
+    } catch(_){ }
   }
   function roleLabel(r){
     return ({

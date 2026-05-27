@@ -46,15 +46,14 @@
       <div><b>مدير كنيسة:</b> admin@church.local / admin123</div>
       <div><b>خادم:</b> mina@church.local / mina123</div>
       <div><b>Super Admin:</b> super@platform.local / super123</div>
+      <div style="margin-top:.75rem;text-align:center">
+        <a href="#" id="factory-reset-link" style="color:var(--accent);font-size:.78rem;text-decoration:underline">إعادة تعيين البيانات</a>
+      </div>
     </div>
   </div>
 
   <!-- v19 FIX: load core scripts BEFORE inline handler so DB/Auth exist -->
   <script src="data/schema.js"></script>
-  <script src="data/schema-v12.js"></script>
-  <script src="data/schema-v13.js"></script>
-  <script src="data/schema-v14.js"></script>
-  <script src="data/schema-v15.js"></script>
   <script src="data/mock-data.js"></script>
   <script src="js/db.js"></script>
   <script src="js/security.js"></script>
@@ -73,6 +72,23 @@
             return;
           }
           try{ DB.all('churches'); }catch(_){ /* seed */ }
+
+          // Auto-recovery: ensure demo users/churches exist and the DB cache
+          // is not corrupted before we look anything up.
+          try{ DB.repair(); }catch(_){ try{ DB.factoryReset(); }catch(__){} }
+
+          // Manual recovery link
+          const resetLink = document.getElementById('factory-reset-link');
+          if (resetLink){
+            resetLink.addEventListener('click', function(ev){
+              ev.preventDefault();
+              if (!confirm('سيتم مسح جميع البيانات المحلية وإعادة ضبط النظام. هل تريد المتابعة؟')) return;
+              try{ window.DB && DB.factoryReset(); }catch(_){}
+              try{ window.Security && Security.clearSession(); }catch(_){}
+              try{ window.Security && Security.clearLocks && Security.clearLocks(); }catch(_){}
+              location.reload();
+            });
+          }
 
           // If already logged in, skip the form
           try{
